@@ -1,8 +1,13 @@
 """Checks each decomposed claim against the retrieved evidence via LLM-as-
-judge, in a single batched call rather than one call per claim (this
-project's local model is CPU-bound and slow, so minimizing round trips
-matters). A v2 could swap this for a dedicated NLI classifier (e.g.
-DeBERTa-MNLI) without changing the interface.
+judge. `verify_claims` batches all claims into one call (this project's
+local model is CPU-bound and slow, so minimizing round trips matters);
+`verify_claim_single` checks exactly one claim per call, for the batched-
+vs-single accuracy ablation (see eval/ablation_entailment.py) -- small
+models are more prone to attention dilution and positional bias with
+several claims and a large evidence block sharing one context, and it's
+cheap to check whether that actually costs accuracy here. A v2 could swap
+either for a dedicated NLI classifier (e.g. DeBERTa-MNLI) without changing
+the interface.
 
 Fails closed: any claim whose verdict line is missing or unparseable is
 treated as UNSUPPORTED rather than silently dropped or assumed safe.
@@ -33,16 +38,13 @@ def _format_evidence(evidence: list[EvidenceChunk]) -> str:
     lines = []
     for chunk in evidence:
         drugs = ", ".join(chunk.drug_names)
-        lines.append(f"[{chunk.source} | {drugs} | {chunk.field_name}] {chunk.text}")
+        lines.append(f"[{chunk.source} | {chunk.authority} | {drugs} | {chunk.field_name}] {chunk.text}")
     return "\n".join(lines)
 
 
-def verify_claims(
+def _get_verdicts(
     claims: list[str], evidence: list[EvidenceChunk], llm_client: OllamaClient
-) -> list[Claim]:
-    if not claims:
-        return []
-
+) -> dict[int, ClaimVerdict]:
     numbered_claims = "\n".join(f"{i + 1}. {claim}" for i, claim in enumerate(claims))
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -59,11 +61,23 @@ def verify_claims(
         if match:
             index, verdict_text = int(match.group(1)), match.group(2).upper()
             verdicts[index] = ClaimVerdict(verdict_text.lower())
+    return verdicts
 
+
+def verify_claims(
+    claims: list[str], evidence: list[EvidenceChunk], llm_client: OllamaClient
+) -> list[Claim]:
+    if not claims:
+        return []
+
+    verdicts = _get_verdicts(claims, evidence, llm_client)
     return [
-        Claim(
-            claim_text=claim,
-            verdict=verdicts.get(i + 1, ClaimVerdict.UNSUPPORTED),
-        )
+        Claim(claim_text=claim, verdict=verdicts.get(i + 1, ClaimVerdict.UNSUPPORTED))
         for i, claim in enumerate(claims)
     ]
+
+
+def verify_claim_single(claim: str, evidence: list[EvidenceChunk], llm_client: OllamaClient) -> Claim:
+    """Same check as `verify_claims`, but for exactly one claim per LLM call."""
+    verdicts = _get_verdicts([claim], evidence, llm_client)
+    return Claim(claim_text=claim, verdict=verdicts.get(1, ClaimVerdict.UNSUPPORTED))

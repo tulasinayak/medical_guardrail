@@ -6,7 +6,9 @@ from medical_guardrails.stage3_verify.ingredient_check import (
 
 
 def _label_evidence(field_name: str, text: str) -> EvidenceChunk:
-    return EvidenceChunk(source="openfda", drug_names=["ibuprofen"], field_name=field_name, text=text)
+    return EvidenceChunk(
+        source="openfda", authority="regulatory", drug_names=["ibuprofen"], field_name=field_name, text=text
+    )
 
 
 def test_extracts_and_cleans_ingredient_names():

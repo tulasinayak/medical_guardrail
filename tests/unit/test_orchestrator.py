@@ -59,7 +59,11 @@ def test_ready_query_runs_full_generation_and_verification(
 
     evidence = [
         EvidenceChunk(
-            source="ddinter", drug_names=["ibuprofen", "warfarin"], field_name="interaction_severity", text="major"
+            source="ddinter",
+            authority="curated_secondary",
+            drug_names=["ibuprofen", "warfarin"],
+            field_name="interaction_severity",
+            text="major",
         )
     ]
     mock_retrieve.return_value = evidence

@@ -1,13 +1,14 @@
 from unittest.mock import MagicMock
 
 from medical_guardrails.common.schemas import ClaimVerdict, EvidenceChunk
-from medical_guardrails.stage3_verify.entailment import verify_claims
+from medical_guardrails.stage3_verify.entailment import verify_claim_single, verify_claims
 
 
 def _evidence():
     return [
         EvidenceChunk(
             source="ddinter",
+            authority="curated_secondary",
             drug_names=["ibuprofen", "warfarin"],
             field_name="interaction_severity",
             text="ibuprofen and warfarin have a documented major interaction.",
@@ -53,3 +54,18 @@ def test_is_case_insensitive_to_verdict_text():
     llm_client.chat.return_value = "1: supported"
     claims = verify_claims(["a"], _evidence(), llm_client)
     assert claims[0].verdict == ClaimVerdict.SUPPORTED
+
+
+def test_verify_claim_single_parses_verdict():
+    llm_client = MagicMock()
+    llm_client.chat.return_value = "1: CONTRADICTED"
+    claim = verify_claim_single("a", _evidence(), llm_client)
+    assert claim.claim_text == "a"
+    assert claim.verdict == ClaimVerdict.CONTRADICTED
+
+
+def test_verify_claim_single_fails_closed_to_unsupported():
+    llm_client = MagicMock()
+    llm_client.chat.return_value = "garbage"
+    claim = verify_claim_single("a", _evidence(), llm_client)
+    assert claim.verdict == ClaimVerdict.UNSUPPORTED

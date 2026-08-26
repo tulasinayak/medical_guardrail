@@ -8,6 +8,7 @@ def _ddinter_evidence():
     return [
         EvidenceChunk(
             source="ddinter",
+            authority="curated_secondary",
             drug_names=["ibuprofen", "warfarin"],
             field_name="interaction_severity",
             text="ibuprofen and warfarin have a documented major interaction.",
@@ -54,6 +55,7 @@ def test_blocks_on_ingredient_conflict_even_if_claims_are_all_supported(
     evidence = _ddinter_evidence() + [
         EvidenceChunk(
             source="openfda",
+            authority="regulatory",
             drug_names=["ibuprofen"],
             field_name="inactive_ingredient",
             text="lactose anhydrous",
@@ -75,6 +77,7 @@ def test_ingredients_section_always_rendered_on_pass(mock_verify_claims, mock_de
     evidence = [
         EvidenceChunk(
             source="openfda",
+            authority="regulatory",
             drug_names=["ibuprofen"],
             field_name="active_ingredient",
             text="ibuprofen",

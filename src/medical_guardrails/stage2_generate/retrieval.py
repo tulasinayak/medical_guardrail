@@ -36,6 +36,7 @@ def retrieve_evidence(
                 chunks.append(
                     EvidenceChunk(
                         source="openfda",
+                        authority="regulatory",
                         drug_names=[drug_name],
                         field_name=field_name,
                         text=value,
@@ -49,6 +50,7 @@ def retrieve_evidence(
             chunks.append(
                 EvidenceChunk(
                     source="ddinter",
+                    authority="curated_secondary",
                     drug_names=[drug_a, drug_b],
                     field_name="interaction_severity",
                     text=f"{drug_a} and {drug_b} have a documented {level.lower()} interaction.",

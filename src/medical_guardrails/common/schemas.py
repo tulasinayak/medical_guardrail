@@ -1,15 +1,10 @@
-"""Shared Pydantic models passed between guardrail stages.
-
-`EvidenceChunk` is fully used starting with Stage 2. `StructuredQuery` and
-`Claim` define the shape the later Stage 1 (slot-filling) and Stage 3
-(claim verification) sessions will produce/consume, so the object model is
-settled once rather than re-negotiated per stage; neither is wired into any
-pipeline yet.
-"""
+"""Shared Pydantic models passed between the three guardrail stages and the
+orchestrator that ties them together (see orchestrator.py)."""
 
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -48,15 +43,28 @@ class StructuredQuery(BaseModel):
     existing_conditions: list[str] | None = None
 
 
-EvidenceSource = str  # "rxnorm" | "openfda" | "ddinter"
+EvidenceSource = str  # "openfda" | "ddinter" in practice today -- RxNorm is used only for
+# identity resolution (name -> RxCUI -> canonical name) and never itself surfaced as an
+# evidence chunk, so "rxnorm" doesn't currently occur as a value here.
+
+EvidenceAuthority = Literal["regulatory", "curated_secondary"]
 
 
 class EvidenceChunk(BaseModel):
     """One retrieved fact, attributable to exactly one source, that
     Stage 2's generation is grounded in and Stage 3 will later verify
-    claims against."""
+    claims against.
+
+    `authority` distinguishes an FDA label statement (regulatory,
+    authoritative) from a DDInter interaction classification (a curated but
+    secondary database) -- the two aren't interchangeable evidence, even
+    though both are currently treated as equally checkable by Stage 3. This
+    tag doesn't yet drive any weighting/scoring logic; it exists so a future
+    version of Stage 3 can reason about which kind of source backed a given
+    claim instead of treating all evidence as one undifferentiated pool."""
 
     source: EvidenceSource
+    authority: EvidenceAuthority
     drug_names: list[str]
     field_name: str
     text: str

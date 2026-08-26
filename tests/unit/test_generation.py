@@ -11,6 +11,7 @@ def test_passes_system_prompt_and_formatted_evidence_to_llm():
     evidence = [
         EvidenceChunk(
             source="ddinter",
+            authority="curated_secondary",
             drug_names=["ibuprofen", "warfarin"],
             field_name="interaction_severity",
             text="ibuprofen and warfarin have a documented major interaction.",

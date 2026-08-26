@@ -29,7 +29,7 @@ def _format_evidence(evidence: list[EvidenceChunk]) -> str:
     lines = []
     for chunk in evidence:
         drugs = ", ".join(chunk.drug_names)
-        lines.append(f"[{chunk.source} | {drugs} | {chunk.field_name}] {chunk.text}")
+        lines.append(f"[{chunk.source} | {chunk.authority} | {drugs} | {chunk.field_name}] {chunk.text}")
     return "\n".join(lines)
 
 
