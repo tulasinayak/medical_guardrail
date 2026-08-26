@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from medical_guardrails.common.schemas import Claim, ClaimVerdict, EvidenceChunk
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.base import LLMClient
 from medical_guardrails.stage3_verify.claim_decomposition import decompose_claims
 from medical_guardrails.stage3_verify.entailment import verify_claims
 from medical_guardrails.stage3_verify.ingredient_check import check_ingredient_conflicts
@@ -49,8 +49,20 @@ def verify_response(
     draft_response: str,
     evidence: list[EvidenceChunk],
     allergies: list[str],
-    llm_client: OllamaClient,
+    llm_client: LLMClient,
 ) -> VerificationResult:
+    if not evidence:
+        # Nothing was retrieved, so generate_grounded_response() already
+        # returned its fixed not-in-sources fallback without calling the
+        # LLM. Decomposing/verifying it here would be pointless at best
+        # (there's nothing to check it against) and actively wrong at
+        # worst: any claim checked against empty evidence trivially reads
+        # as unsupported, which would incorrectly block an honest "I don't
+        # know" as if it were an unverified assertion.
+        return VerificationResult(
+            claims=[], ingredients_found=[], ingredient_conflicts=[], action="pass", final_response=draft_response
+        )
+
     claims = verify_claims(decompose_claims(draft_response, llm_client), evidence, llm_client)
     ingredient_result = check_ingredient_conflicts(evidence, allergies)
 

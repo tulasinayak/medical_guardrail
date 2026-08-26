@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 
 from medical_guardrails.config import Settings
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.factory import build_llm_client
 from medical_guardrails.stage1_slotfill.gate import slot_fill_gate
 
 
@@ -19,11 +19,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     settings = Settings()
-    llm_client = OllamaClient(
-        host=settings.ollama_host,
-        model=settings.ollama_model,
-        timeout=settings.ollama_timeout_seconds,
-    )
+    llm_client = build_llm_client(settings)
     result = slot_fill_gate(args.query, llm_client)
 
     print(f"Query type: {result.structured_query.query_type.value}")

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from medical_guardrails.common.schemas import StructuredQuery
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.base import LLMClient
 from medical_guardrails.stage1_slotfill.classifier import extract_structured_query
 from medical_guardrails.stage1_slotfill.required_fields import CLARIFYING_QUESTIONS, missing_fields
 
@@ -24,7 +24,7 @@ class GateResult:
     clarifying_question: str | None
 
 
-def slot_fill_gate(raw_text: str, llm_client: OllamaClient) -> GateResult:
+def slot_fill_gate(raw_text: str, llm_client: LLMClient) -> GateResult:
     query = extract_structured_query(raw_text, llm_client)
     missing = missing_fields(query)
 

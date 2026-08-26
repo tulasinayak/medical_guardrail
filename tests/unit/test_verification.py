@@ -70,6 +70,27 @@ def test_blocks_on_ingredient_conflict_even_if_claims_are_all_supported(
 
 @patch("medical_guardrails.stage3_verify.verification.decompose_claims")
 @patch("medical_guardrails.stage3_verify.verification.verify_claims")
+def test_empty_evidence_passes_through_without_decomposing_or_verifying(
+    mock_verify_claims, mock_decompose
+):
+    # A live eval run found that an honest "I don't have information" reply
+    # (the only thing generate_grounded_response can return when evidence is
+    # empty) was getting decomposed and then blocked as an unsupported claim
+    # -- any claim checked against empty evidence trivially reads as
+    # unsupported. verify_response must not call decompose_claims/
+    # verify_claims at all in this case.
+    result = verify_response("I don't have reliable information on this in my sources.", [], ["lactose"], MagicMock())
+
+    assert result.action == "pass"
+    assert result.final_response == "I don't have reliable information on this in my sources."
+    assert result.claims == []
+    assert result.ingredient_conflicts == []
+    mock_decompose.assert_not_called()
+    mock_verify_claims.assert_not_called()
+
+
+@patch("medical_guardrails.stage3_verify.verification.decompose_claims")
+@patch("medical_guardrails.stage3_verify.verification.verify_claims")
 def test_ingredients_section_always_rendered_on_pass(mock_verify_claims, mock_decompose):
     mock_decompose.return_value = []
     mock_verify_claims.return_value = []

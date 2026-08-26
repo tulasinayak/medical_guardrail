@@ -12,7 +12,7 @@ import argparse
 import sys
 
 from medical_guardrails.config import Settings
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.factory import build_llm_client
 from medical_guardrails.stage2_generate.ddinter_lookup import DDInterLookup
 from medical_guardrails.stage2_generate.generation import generate_grounded_response
 from medical_guardrails.stage2_generate.openfda_client import OpenFDAClient
@@ -44,11 +44,7 @@ def main(argv: list[str] | None = None) -> None:
     for chunk in evidence:
         print(f"  [{chunk.source}] {chunk.field_name} ({', '.join(chunk.drug_names)})", file=sys.stderr)
 
-    llm_client = OllamaClient(
-        host=settings.ollama_host,
-        model=settings.ollama_model,
-        timeout=settings.ollama_timeout_seconds,
-    )
+    llm_client = build_llm_client(settings)
     reply = generate_grounded_response(question, evidence, llm_client)
 
     print("\n--- Response ---")

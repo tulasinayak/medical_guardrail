@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
 from medical_guardrails.common.schemas import EvidenceChunk
-from medical_guardrails.stage2_generate.generation import generate_grounded_response
+from medical_guardrails.stage2_generate.generation import NOT_IN_SOURCES_FALLBACK, generate_grounded_response
 
 
 def test_passes_system_prompt_and_formatted_evidence_to_llm():
@@ -28,12 +28,10 @@ def test_passes_system_prompt_and_formatted_evidence_to_llm():
     assert "Any interaction?" in messages[1]["content"]
 
 
-def test_handles_empty_evidence_without_erroring():
+def test_empty_evidence_returns_fallback_without_calling_llm():
     llm_client = MagicMock()
-    llm_client.chat.return_value = "I don't have reliable information on this in my sources."
 
     reply = generate_grounded_response("Any interaction?", [], llm_client)
 
-    assert reply
-    messages = llm_client.chat.call_args[0][0]
-    assert "no evidence retrieved" in messages[1]["content"]
+    assert NOT_IN_SOURCES_FALLBACK in reply
+    llm_client.chat.assert_not_called()

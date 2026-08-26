@@ -21,7 +21,8 @@ from typing import Literal
 
 from medical_guardrails.common.schemas import EvidenceChunk, StructuredQuery
 from medical_guardrails.config import Settings
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.base import LLMClient
+from medical_guardrails.llm.factory import build_llm_client
 from medical_guardrails.stage1_slotfill.gate import slot_fill_gate
 from medical_guardrails.stage2_generate.ddinter_lookup import DDInterLookup
 from medical_guardrails.stage2_generate.generation import generate_grounded_response
@@ -52,14 +53,10 @@ class MedicalGuardrailPipeline:
     def __init__(
         self,
         settings: Settings | None = None,
-        llm_client: OllamaClient | None = None,
+        llm_client: LLMClient | None = None,
     ) -> None:
         self.settings = settings or Settings()
-        self.llm_client = llm_client or OllamaClient(
-            host=self.settings.ollama_host,
-            model=self.settings.ollama_model,
-            timeout=self.settings.ollama_timeout_seconds,
-        )
+        self.llm_client = llm_client or build_llm_client(self.settings)
         self.rxnorm_client = RxNormClient(self.settings.rxnorm_base_url, self.settings.http_timeout_seconds)
         self.openfda_client = OpenFDAClient(self.settings.openfda_base_url, self.settings.http_timeout_seconds)
         self.ddinter_lookup = DDInterLookup(self.settings.ddinter_db_path)

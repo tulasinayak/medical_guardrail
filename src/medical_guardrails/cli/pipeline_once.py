@@ -24,11 +24,13 @@ def main(argv: list[str] | None = None) -> int:
     pipeline = MedicalGuardrailPipeline()
 
     if not pipeline.llm_client.health_check():
-        print(
-            f"[!!] Ollama not reachable at {pipeline.settings.ollama_host} "
-            f"with model {pipeline.settings.ollama_model}",
-            file=sys.stderr,
+        provider = pipeline.settings.llm_provider
+        detail = (
+            f"{pipeline.settings.ollama_host} with model {pipeline.settings.ollama_model}"
+            if provider == "ollama"
+            else f"OpenAI model {pipeline.settings.openai_model} (check API key and network)"
         )
+        print(f"[!!] LLM backend ({provider}) not reachable: {detail}", file=sys.stderr)
         return 1
 
     result = pipeline.process_query(query)

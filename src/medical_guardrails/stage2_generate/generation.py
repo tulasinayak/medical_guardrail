@@ -1,15 +1,26 @@
 """Grounded generation: answers a user's question using only the retrieved
-evidence, via the local Ollama model. The system prompt is the guardrail
-here -- it forbids answering from the model's own memorized knowledge and
-requires an explicit fallback when the evidence doesn't cover the question.
+evidence. The system prompt is the guardrail for *partial* coverage -- it
+forbids answering from the model's own memorized knowledge and requires an
+explicit fallback when the evidence doesn't cover part of the question.
+
+For *no* coverage at all (evidence is empty), that guarantee is enforced in
+code instead of by prompt: generate_grounded_response returns the fallback
+directly without calling the LLM. A live eval run found the prompt-only
+version occasionally failed silently -- given zero evidence, the model
+sometimes answered from its own general knowledge anyway rather than
+declining, which is exactly the failure mode this guardrail exists to
+prevent. There's nothing a retrieved-evidence-grounded prompt can add when
+there's no evidence to ground it in, so skipping the call entirely closes
+that gap rather than just asking the model more firmly.
 """
 
 from __future__ import annotations
 
 from medical_guardrails.common.schemas import EvidenceChunk
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.base import LLMClient
 
 NOT_IN_SOURCES_FALLBACK = "I don't have reliable information on this in my sources."
+NO_EVIDENCE_RESPONSE = f"{NOT_IN_SOURCES_FALLBACK} Please consult a pharmacist or doctor for guidance specific to your situation."
 
 SYSTEM_PROMPT = f"""You are a medical information assistant. You must answer ONLY using \
 the EVIDENCE block below -- never from your own training or general knowledge, even if you \
@@ -34,8 +45,11 @@ def _format_evidence(evidence: list[EvidenceChunk]) -> str:
 
 
 def generate_grounded_response(
-    user_query: str, evidence: list[EvidenceChunk], llm_client: OllamaClient
+    user_query: str, evidence: list[EvidenceChunk], llm_client: LLMClient
 ) -> str:
+    if not evidence:
+        return NO_EVIDENCE_RESPONSE
+
     evidence_block = _format_evidence(evidence)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},

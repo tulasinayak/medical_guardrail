@@ -19,7 +19,7 @@ import sys
 import time
 
 from medical_guardrails.config import Settings
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.factory import build_llm_client
 from medical_guardrails.stage2_generate.ddinter_lookup import DDInterLookup
 from medical_guardrails.stage2_generate.generation import generate_grounded_response
 from medical_guardrails.stage2_generate.openfda_client import OpenFDAClient
@@ -34,11 +34,9 @@ DRUGS = ["ibuprofen", "warfarin"]
 
 def main() -> None:
     settings = Settings()
-    llm_client = OllamaClient(
-        host=settings.ollama_host, model=settings.ollama_model, timeout=settings.ollama_timeout_seconds
-    )
+    llm_client = build_llm_client(settings)
     if not llm_client.health_check():
-        print(f"[!!] Ollama not reachable with model {settings.ollama_model}", file=sys.stderr)
+        print(f"[!!] LLM backend ({settings.llm_provider}) not reachable", file=sys.stderr)
         raise SystemExit(1)
 
     evidence = retrieve_evidence(

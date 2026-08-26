@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 
 from medical_guardrails.common.schemas import Claim, ClaimVerdict, EvidenceChunk
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.base import LLMClient
 
 SYSTEM_PROMPT = """You are a strict fact-checker. Given EVIDENCE and a numbered list of CLAIMS, \
 decide for each claim whether the evidence SUPPORTS it, CONTRADICTS it, or is UNSUPPORTED \
@@ -43,7 +43,7 @@ def _format_evidence(evidence: list[EvidenceChunk]) -> str:
 
 
 def _get_verdicts(
-    claims: list[str], evidence: list[EvidenceChunk], llm_client: OllamaClient
+    claims: list[str], evidence: list[EvidenceChunk], llm_client: LLMClient
 ) -> dict[int, ClaimVerdict]:
     numbered_claims = "\n".join(f"{i + 1}. {claim}" for i, claim in enumerate(claims))
     messages = [
@@ -65,7 +65,7 @@ def _get_verdicts(
 
 
 def verify_claims(
-    claims: list[str], evidence: list[EvidenceChunk], llm_client: OllamaClient
+    claims: list[str], evidence: list[EvidenceChunk], llm_client: LLMClient
 ) -> list[Claim]:
     if not claims:
         return []
@@ -77,7 +77,7 @@ def verify_claims(
     ]
 
 
-def verify_claim_single(claim: str, evidence: list[EvidenceChunk], llm_client: OllamaClient) -> Claim:
+def verify_claim_single(claim: str, evidence: list[EvidenceChunk], llm_client: LLMClient) -> Claim:
     """Same check as `verify_claims`, but for exactly one claim per LLM call."""
     verdicts = _get_verdicts([claim], evidence, llm_client)
     return Claim(claim_text=claim, verdict=verdicts.get(1, ClaimVerdict.UNSUPPORTED))

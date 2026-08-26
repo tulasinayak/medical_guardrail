@@ -6,7 +6,7 @@ model than well-formed JSON tends to be.
 
 from __future__ import annotations
 
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.base import LLMClient
 
 SYSTEM_PROMPT = """You decompose a medical assistant's draft response into atomic factual claims.
 
@@ -19,7 +19,7 @@ factual assertions.
 - If the response contains no checkable factual claims at all, output nothing."""
 
 
-def decompose_claims(draft_response: str, llm_client: OllamaClient) -> list[str]:
+def decompose_claims(draft_response: str, llm_client: LLMClient) -> list[str]:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": draft_response},

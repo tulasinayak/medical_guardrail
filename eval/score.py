@@ -78,11 +78,7 @@ def save_results(results: list[dict], out_path: Path = RESULTS_PATH) -> None:
 def main() -> int:
     pipeline = MedicalGuardrailPipeline()
     if not pipeline.llm_client.health_check():
-        print(
-            f"[!!] Ollama not reachable at {pipeline.settings.ollama_host} "
-            f"with model {pipeline.settings.ollama_model}",
-            file=sys.stderr,
-        )
+        print(f"[!!] LLM backend ({pipeline.settings.llm_provider}) not reachable", file=sys.stderr)
         return 1
 
     cases = load_cases()

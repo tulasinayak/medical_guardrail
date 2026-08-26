@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 
 from medical_guardrails.common.schemas import QueryType, StructuredQuery
-from medical_guardrails.llm.ollama_client import OllamaClient
+from medical_guardrails.llm.base import LLMClient
 
 FAIL_CLOSED_TYPE = QueryType.DRUG_INTERACTION
 
@@ -97,7 +97,7 @@ def _list_for_status(status: str, values: list[str]) -> list[str] | None:
     return None
 
 
-def extract_structured_query(raw_text: str, llm_client: OllamaClient) -> StructuredQuery:
+def extract_structured_query(raw_text: str, llm_client: LLMClient) -> StructuredQuery:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": raw_text},
