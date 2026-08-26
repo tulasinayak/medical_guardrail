@@ -26,11 +26,10 @@ User prompt
 Final response
 ```
 
-All three stages are implemented individually and manually testable via
-their own CLIs. They are not yet wired into a single end-to-end pipeline
-(that's the natural next session, mirroring `pii_guardrails`'
-`orchestrator.py`) -- each stage's CLI currently calls the ones before it
-directly.
+All three stages are wired into one end-to-end pipeline
+(`orchestrator.MedicalGuardrailPipeline`, mirroring `pii_guardrails`'
+`orchestrator.GuardrailedChat`), and each stage also has its own standalone
+CLI for testing it in isolation.
 
 ## Quickstart
 
@@ -49,13 +48,15 @@ python data/ddinter/build_ddinter_db.py
 # limitations below -- so pass a longer timeout via
 # MEDICAL_GUARDRAILS_OLLAMA_TIMEOUT_SECONDS if calls are timing out.
 
-# Stage 1 alone: slot-filling gate
+# Full pipeline: Stage 1 extracts drug names/allergies/age from the raw query itself --
+# no separate flags needed. Missing required fields short-circuit to a clarifying
+# question before anything is generated.
+python -m medical_guardrails.cli.pipeline_once "Is it safe to take ibuprofen with warfarin?"
+python -m medical_guardrails.cli.pipeline_once "I have a lactose allergy. Is it safe for an adult to take ibuprofen with warfarin?"
+
+# Individual stages, for testing one in isolation:
 python -m medical_guardrails.stage1_slotfill.cli "Can I take ibuprofen with warfarin?"
-
-# Stage 2 alone: retrieval + grounded generation
 python -m medical_guardrails.stage2_generate.cli ibuprofen warfarin
-
-# Stage 2 + Stage 3 chained: generation + claim verification + ingredient check
 python -m medical_guardrails.stage3_verify.cli ibuprofen warfarin --allergy lactose
 
 # Tests
@@ -66,6 +67,8 @@ pytest tests -m integration                # real RxNorm/openFDA calls + real Ol
 
 ## Architecture
 
+- `src/medical_guardrails/orchestrator.py` — `MedicalGuardrailPipeline.process_query()`: runs Stage 1's gate first and returns immediately with a clarifying question if anything required is missing; otherwise runs Stage 2 retrieval + generation, then Stage 3 verification, using Stage 1's extracted `StructuredQuery` as the actual input (its `drug_names` feed retrieval, its `allergies` feed the ingredient check) rather than passing those in separately.
+- `src/medical_guardrails/cli/pipeline_once.py` — the full end-to-end CLI, taking one raw natural-language query and nothing else.
 - `src/medical_guardrails/common/schemas.py` — shared Pydantic models passed between stages: `StructuredQuery` (Stage 1's output), `EvidenceChunk` (Stage 2's output), `Claim` (Stage 3's output).
 - `src/medical_guardrails/stage1_slotfill/` — `classifier.py` (LLM-based query-type classification + field extraction, line-based output format), `required_fields.py` (per-query-type required-fields table + clarifying questions), `gate.py` (`slot_fill_gate()`: ties the two together into a ready/needs_clarification decision).
 - `src/medical_guardrails/stage2_generate/` — `rxnorm_client.py` (name → RxCUI, plus canonical-name lookup), `openfda_client.py` (label text by name: contraindications/warnings/interactions/ingredients), `ddinter_lookup.py` (local offline pairwise interaction severity), `retrieval.py` (combines all three into one evidence list), `generation.py` (grounded generation via Ollama, with a system prompt that forbids answering outside the retrieved evidence).
@@ -78,4 +81,4 @@ pytest tests -m integration                # real RxNorm/openFDA calls + real Ol
 - **Stage 2/DDInter**: DDInter's bulk CSV export only carries interaction severity (Major/Moderate/Minor), not the mechanism/management text DDInter shows on its per-pair detail pages. Many drugs won't resolve to an openFDA label at all (esp. less common generics); `retrieve_evidence` treats that as a normal empty result, not an error.
 - **Stage 3 ingredient parsing**: ingredient names are split from openFDA's free-text label fields with a simple comma/parenthetical/dosage heuristic, not a real parser -- footnote markers and pharmacopeia suffixes (e.g. "USP") sometimes survive in the extracted name. This doesn't affect allergy matching (substring matching still catches e.g. "ibuprofen" inside "ibuprofen usp"), but the rendered ingredient list isn't always clean.
 - **Generation/verification latency**: a CPU-only local Ollama instance evals prompts at roughly 40ms/token. A 2-drug Stage 2 query's evidence block is ~3,300 tokens, and Stage 3 adds two more LLM round trips (decomposition + batched entailment) over that same evidence -- a full Stage 2+3 run can take several minutes on hardware like this.
-- **No end-to-end orchestrator yet**: the three stages aren't wired into one pipeline object the way `pii_guardrails.orchestrator.GuardrailedChat` wires its two guardrails around the LLM call -- each stage's CLI chains the previous stage's functions directly. Building that orchestrator (plus using Stage 1's actual `StructuredQuery` as the input to Stage 2/3, instead of Stage 2/3's CLIs taking drug names/allergies directly) is the natural next step.
+- **Evidence scope**: retrieval is drug-name-centric. For a query where Stage 1 extracts no drug names at all (most pure symptom/home-remedy/general-info questions), evidence will be empty and Stage 2 correctly falls back to "not in my sources" -- this project does not implement a symptom- or recipe-specific evidence source, so those query types are gated by Stage 1 but not usefully answered by Stage 2/3 yet.
