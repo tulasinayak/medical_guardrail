@@ -23,20 +23,29 @@ class QueryType(str, Enum):
 
 
 class StructuredQuery(BaseModel):
-    """Produced by Stage 1 once it exists. Fields are mostly optional here
-    because which ones are *required* depends on `query_type`, and that
-    required-fields schema is Stage 1's job to enforce, not this model's."""
+    """Produced by Stage 1. Fields are mostly optional here because which
+    ones are *required* depends on `query_type`, and that required-fields
+    schema is Stage 1's job to enforce, not this model's.
+
+    For the list-valued fields (allergies, current_medications,
+    existing_conditions): `None` means the user was never asked / never
+    said anything on the topic, while `[]` means they were asked (or
+    volunteered) and explicitly said "none". This distinction is the whole
+    point of the slot-filling gate -- collapsing both to `[]` is exactly
+    the allergy-omission failure mode Stage 1 exists to catch, since an
+    unset field and a confirmed "no allergies" would otherwise be
+    indistinguishable."""
 
     raw_text: str
     query_type: QueryType
     drug_names: list[str] = []
-    allergies: list[str] = []
-    current_medications: list[str] = []
+    allergies: list[str] | None = None
+    current_medications: list[str] | None = None
     age_bracket: str | None = None
     pregnancy_status: str | None = None
     symptom_duration: str | None = None
     symptom_severity: str | None = None
-    existing_conditions: list[str] = []
+    existing_conditions: list[str] | None = None
 
 
 EvidenceSource = str  # "rxnorm" | "openfda" | "ddinter"
