@@ -1,17 +1,22 @@
 """Classifies a raw query into a QueryType and extracts whatever
 StructuredQuery fields are already present in the text, via the local LLM.
 
-Uses a plain line-based output format (KEY: value) rather than JSON, for
-the same reliability reasons as Stage 3's claim decomposition/entailment
-modules: small local models produce malformed JSON often enough that a
-flat, per-line format is more robust to parse.
+Uses Ollama's structured-output support (a JSON schema passed as `format`)
+rather than a hand-rolled text format: grammar-constrained decoding makes a
+malformed/unparseable reply structurally impossible, rather than merely
+less likely the way a "please output exactly these lines" prompt is. This
+replaced an earlier plain-text line format for that reason.
 
-For each optional field the model is asked to distinguish "not mentioned in
-the query" from "mentioned, and explicitly none" -- see the NONE_MENTIONED
-vs NONE_STATED distinction below -- since collapsing that distinction is
-exactly the failure mode Stage 1 exists to prevent.
+Caveat: constrained decoding guarantees the *shape* of the output conforms
+to the schema, not that the model places each value under the *semantically
+correct* key -- it can still misattribute a "no allergies" statement to the
+wrong field. The schema helps by giving each field (allergies, current
+medications, existing conditions) its own explicit status enum rather than
+relying on the model to disambiguate one shared free-text negation, but
+this needs to be verified empirically, not assumed fixed.
 
-Fails closed: if the TYPE line is missing or unrecognized, defaults to
+Fails closed: if the reply isn't valid JSON matching the expected shape (a
+model/version that ignores `format`, or a malformed edge case), defaults to
 DRUG_INTERACTION -- the query type with the most required fields -- rather
 than GENERAL_INFO, which requires none. An unclassifiable query should
 trigger *more* scrutiny, not less.
@@ -19,59 +24,77 @@ trigger *more* scrutiny, not less.
 
 from __future__ import annotations
 
-import re
+import json
 
 from medical_guardrails.common.schemas import QueryType, StructuredQuery
 from medical_guardrails.llm.ollama_client import OllamaClient
 
 FAIL_CLOSED_TYPE = QueryType.DRUG_INTERACTION
 
-_LIST_FIELDS = {"drug_names", "allergies", "current_medications", "existing_conditions"}
-_SCALAR_FIELDS = {"age_bracket", "pregnancy_status", "symptom_duration", "symptom_severity"}
+_STATUS_NOT_MENTIONED = "NOT_MENTIONED"
+_STATUS_STATED_NONE = "STATED_NONE"
+_STATUS_STATED_PRESENT = "STATED_PRESENT"
+_STATUS_VALUES = [_STATUS_NOT_MENTIONED, _STATUS_STATED_NONE, _STATUS_STATED_PRESENT]
 
-SYSTEM_PROMPT = f"""You extract structured information from a health-related question, to decide \
+# Each ambiguous field gets its own status enum + a values array, rather than
+# a single field that has to encode both "was this mentioned" and "what was
+# said" -- a oneOf/union of string-or-array is the more compact schema but
+# not all constrained-decoding backends support it reliably, and splitting
+# the two concerns also makes the model's job simpler: one enum choice, then
+# (if applicable) a plain list.
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "query_type": {"type": "string", "enum": [t.value for t in QueryType]},
+        "drug_names": {"type": "array", "items": {"type": "string"}},
+        "allergies_status": {"type": "string", "enum": _STATUS_VALUES},
+        "allergies": {"type": "array", "items": {"type": "string"}},
+        "current_medications_status": {"type": "string", "enum": _STATUS_VALUES},
+        "current_medications": {"type": "array", "items": {"type": "string"}},
+        "existing_conditions_status": {"type": "string", "enum": _STATUS_VALUES},
+        "existing_conditions": {"type": "array", "items": {"type": "string"}},
+        "age_bracket": {"type": ["string", "null"]},
+        "pregnancy_status": {"type": ["string", "null"]},
+        "symptom_duration": {"type": ["string", "null"]},
+        "symptom_severity": {"type": ["string", "null"]},
+    },
+    "required": [
+        "query_type",
+        "drug_names",
+        "allergies_status",
+        "allergies",
+        "current_medications_status",
+        "current_medications",
+        "existing_conditions_status",
+        "existing_conditions",
+        "age_bracket",
+        "pregnancy_status",
+        "symptom_duration",
+        "symptom_severity",
+    ],
+}
+
+SYSTEM_PROMPT = """You extract structured information from a health-related question, to decide \
 what a downstream safety check still needs to ask about.
 
-Output EXACTLY these lines, in this order, with no extra commentary:
+For allergies, current medications, and existing conditions: set the matching "_status" field to
+STATED_PRESENT and list the values if the user named any; to STATED_NONE if the user explicitly
+said they have none of that specific thing; or to NOT_MENTIONED if that topic never came up at
+all. Attribute each "none"/"no" statement to the SPECIFIC field it refers to -- do not apply it
+to a different field than the one the user actually named. For example, "I have no drug
+allergies" sets allergies_status to STATED_NONE, and current_medications_status stays
+NOT_MENTIONED since medications were never brought up.
 
-TYPE: <one of: drug_interaction, dosage, symptom, home_remedy, general_info>
-DRUG_NAMES: <comma-separated drug names mentioned, or NONE_MENTIONED>
-ALLERGIES: <comma-separated allergies, or NONE_STATED if the user said they have none, or \
-NONE_MENTIONED if allergies were never brought up>
-CURRENT_MEDICATIONS: <comma-separated medications, or NONE_STATED, or NONE_MENTIONED>
-EXISTING_CONDITIONS: <comma-separated conditions, or NONE_STATED, or NONE_MENTIONED>
-AGE_BRACKET: <e.g. infant/child/adult/senior/a specific age, or NONE_MENTIONED>
-PREGNANCY_STATUS: <if stated, or NONE_MENTIONED>
-SYMPTOM_DURATION: <if stated, or NONE_MENTIONED>
-SYMPTOM_SEVERITY: <if stated, or NONE_MENTIONED>
-
-NONE_STATED means the user explicitly said they have none. NONE_MENTIONED means the topic never \
-came up at all. Do not guess NONE_STATED unless the user actually said so, and attribute each \
-"none"/"no" statement to the SPECIFIC field it refers to -- do not apply it to a different field \
-than the one the user actually named.
-
-Example: for "I have no drug allergies, can I take ibuprofen with warfarin?" the correct output \
-has ALLERGIES: NONE_STATED (because the user named allergies specifically) and \
-CURRENT_MEDICATIONS: NONE_MENTIONED (because medications were never brought up at all -- do NOT \
-mark them NONE_STATED just because some other field was negated)."""
-
-_LINE = re.compile(r"^\s*([A-Z_]+)\s*:\s*(.*)$")
+For age_bracket, pregnancy_status, symptom_duration, and symptom_severity: use the stated value,
+or null if not mentioned."""
 
 
-def _parse_list_value(value: str) -> list[str] | None:
-    value = value.strip()
-    if value.upper() == "NONE_MENTIONED":
-        return None
-    if value.upper() == "NONE_STATED":
+def _list_for_status(status: str, values: list[str]) -> list[str] | None:
+    if status == _STATUS_STATED_NONE:
         return []
-    return [item.strip() for item in value.split(",") if item.strip()]
-
-
-def _parse_scalar_value(value: str) -> str | None:
-    value = value.strip()
-    if not value or value.upper() == "NONE_MENTIONED":
-        return None
-    return value
+    if status == _STATUS_STATED_PRESENT:
+        return [v.strip() for v in values if v.strip()]
+    return None
 
 
 def extract_structured_query(raw_text: str, llm_client: OllamaClient) -> StructuredQuery:
@@ -79,31 +102,31 @@ def extract_structured_query(raw_text: str, llm_client: OllamaClient) -> Structu
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": raw_text},
     ]
-    raw = llm_client.chat(messages)
+    raw = llm_client.chat(messages, format=RESPONSE_SCHEMA)
 
-    fields: dict[str, str] = {}
-    for line in raw.splitlines():
-        match = _LINE.match(line)
-        if match:
-            fields[match.group(1).upper()] = match.group(2)
-
-    type_text = fields.get("TYPE", "").strip().lower()
     try:
-        query_type = QueryType(type_text)
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        data = {}
+
+    try:
+        query_type = QueryType(data.get("query_type"))
     except ValueError:
         query_type = FAIL_CLOSED_TYPE
-
-    drug_names = _parse_list_value(fields.get("DRUG_NAMES", "NONE_MENTIONED")) or []
 
     return StructuredQuery(
         raw_text=raw_text,
         query_type=query_type,
-        drug_names=drug_names,
-        allergies=_parse_list_value(fields.get("ALLERGIES", "NONE_MENTIONED")),
-        current_medications=_parse_list_value(fields.get("CURRENT_MEDICATIONS", "NONE_MENTIONED")),
-        existing_conditions=_parse_list_value(fields.get("EXISTING_CONDITIONS", "NONE_MENTIONED")),
-        age_bracket=_parse_scalar_value(fields.get("AGE_BRACKET", "")),
-        pregnancy_status=_parse_scalar_value(fields.get("PREGNANCY_STATUS", "")),
-        symptom_duration=_parse_scalar_value(fields.get("SYMPTOM_DURATION", "")),
-        symptom_severity=_parse_scalar_value(fields.get("SYMPTOM_SEVERITY", "")),
+        drug_names=[d.strip() for d in data.get("drug_names", []) if d and d.strip()],
+        allergies=_list_for_status(data.get("allergies_status", ""), data.get("allergies", [])),
+        current_medications=_list_for_status(
+            data.get("current_medications_status", ""), data.get("current_medications", [])
+        ),
+        existing_conditions=_list_for_status(
+            data.get("existing_conditions_status", ""), data.get("existing_conditions", [])
+        ),
+        age_bracket=data.get("age_bracket") or None,
+        pregnancy_status=data.get("pregnancy_status") or None,
+        symptom_duration=data.get("symptom_duration") or None,
+        symptom_severity=data.get("symptom_severity") or None,
     )

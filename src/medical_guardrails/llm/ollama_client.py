@@ -21,12 +21,18 @@ class OllamaClient:
         self.model = model
         self.timeout = timeout
 
-    def chat(self, messages: list[dict[str, str]]) -> str:
+    def chat(self, messages: list[dict[str, str]], format: dict | None = None) -> str:
         """messages: list of {"role": "user"|"assistant"|"system", "content": str}.
-        Returns the assistant's reply text."""
+        `format`: an optional JSON schema -- when given, Ollama grammar-constrains
+        decoding so the reply structurally cannot deviate from it (see
+        docs.ollama.com/capabilities/structured-outputs). Returns the assistant's
+        reply text (a JSON string when `format` is set)."""
+        payload = {"model": self.model, "messages": messages, "stream": False}
+        if format is not None:
+            payload["format"] = format
         response = httpx.post(
             f"{self.host}/api/chat",
-            json={"model": self.model, "messages": messages, "stream": False},
+            json=payload,
             timeout=self.timeout,
         )
         response.raise_for_status()
