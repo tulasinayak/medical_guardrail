@@ -11,3 +11,6 @@ dist/
 htmlcov/
 .env
 *.sqlite
+eval/results/*
+!eval/results/.gitkeep
+eval/datasets/

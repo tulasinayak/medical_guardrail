@@ -1,0 +1,4 @@
+{"id": "gate-incomplete-drug-interaction-01", "document": "Can I take ibuprofen with warfarin? <PLACEHOLDER>", "placeholder": "<PLACEHOLDER>"}
+{"id": "gate-incomplete-dosage-01", "document": "What's the right dose of acetaminophen for me? <PLACEHOLDER>", "placeholder": "<PLACEHOLDER>"}
+{"id": "gate-incomplete-drug-interaction-02", "document": "Is it safe to combine metformin and lisinopril? <PLACEHOLDER>", "placeholder": "<PLACEHOLDER>"}
+{"id": "block-dual-conflict-01", "document": "I have a lactose allergy. Is it safe for an adult to take ibuprofen with warfarin? <PLACEHOLDER>", "placeholder": "<PLACEHOLDER>"}
