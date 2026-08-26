@@ -1,7 +1,8 @@
 """Classifies a raw query into a QueryType and extracts whatever
 StructuredQuery fields are already present in the text, via the local LLM.
 
-Uses Ollama's structured-output support (a JSON schema passed as `format`)
+Uses the LLM backend's structured-output support (a JSON schema passed as `format`,
+translated to whatever the active backend needs -- see llm/factory.py)
 rather than a hand-rolled text format: grammar-constrained decoding makes a
 malformed/unparseable reply structurally impossible, rather than merely
 less likely the way a "please output exactly these lines" prompt is. This
