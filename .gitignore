@@ -13,4 +13,7 @@ htmlcov/
 *.sqlite
 eval/results/*
 !eval/results/.gitkeep
+!eval/results/interactive_prompts/
+eval/results/interactive_prompts/*
+!eval/results/interactive_prompts/.gitkeep
 eval/datasets/

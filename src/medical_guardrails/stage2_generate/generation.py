@@ -44,18 +44,26 @@ def _format_evidence(evidence: list[EvidenceChunk]) -> str:
     return "\n".join(lines)
 
 
-def generate_grounded_response(
-    user_query: str, evidence: list[EvidenceChunk], llm_client: LLMClient
-) -> str:
-    if not evidence:
-        return NO_EVIDENCE_RESPONSE
-
+def build_generation_messages(user_query: str, evidence: list[EvidenceChunk]) -> list[dict[str, str]]:
+    """The exact message list Stage 2 would send to the LLM for this query
+    and evidence -- exposed separately from generate_grounded_response so
+    callers (e.g. the interactive prompt builder) can inspect/save it
+    without actually invoking the model."""
     evidence_block = _format_evidence(evidence)
-    messages = [
+    return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": f"EVIDENCE:\n{evidence_block}\n\nQUESTION: {user_query}",
         },
     ]
+
+
+def generate_grounded_response(
+    user_query: str, evidence: list[EvidenceChunk], llm_client: LLMClient
+) -> str:
+    if not evidence:
+        return NO_EVIDENCE_RESPONSE
+
+    messages = build_generation_messages(user_query, evidence)
     return llm_client.chat(messages)
