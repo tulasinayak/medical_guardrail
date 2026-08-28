@@ -102,9 +102,13 @@ def main(argv: list[str] | None = None) -> int:
         "one classification call to re-check what's still missing, so this may take a while.)"
     )
 
-    result = run_interactive_slot_fill(
-        initial_query, llm_client, ask_fn=_terminal_ask, max_questions=args.max_questions
-    )
+    try:
+        result = run_interactive_slot_fill(
+            initial_query, llm_client, ask_fn=_terminal_ask, max_questions=args.max_questions
+        )
+    except (EOFError, KeyboardInterrupt):
+        print("\n\nInput ended before the guardrail was satisfied -- exiting without saving a prompt.", file=sys.stderr)
+        return 1
 
     status = "Resolved" if result.resolved else "NOT fully resolved"
     print(f"\n--- {status} after {result.questions_asked} question(s) ---")

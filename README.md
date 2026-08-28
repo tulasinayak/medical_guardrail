@@ -59,6 +59,12 @@ python -m medical_guardrails.stage1_slotfill.cli "Can I take ibuprofen with warf
 python -m medical_guardrails.stage2_generate.cli ibuprofen warfarin
 python -m medical_guardrails.stage3_verify.cli ibuprofen warfarin --allergy lactose
 
+# Interactive: type a query, answer the gate's clarifying question(s) at a real
+# terminal prompt (up to --max-questions, default 5), then the exact prompt that
+# would go to Stage 2 is saved to a file WITHOUT calling the generation model --
+# see "Interactive prompt builder" below.
+python -m medical_guardrails.cli.interactive_prompt_builder
+
 # Tests
 pytest tests/unit                          # fast, fully mocked, no network/Ollama needed
 pytest tests -m "not integration"          # same as above
@@ -81,6 +87,7 @@ spikee test --dataset datasets/<generated-file>.jsonl --target guardrail_target 
 
 - `src/medical_guardrails/orchestrator.py` — `MedicalGuardrailPipeline.process_query()`: runs Stage 1's gate first and returns immediately with a clarifying question if anything required is missing; otherwise runs Stage 2 retrieval + generation, then Stage 3 verification, using Stage 1's extracted `StructuredQuery` as the actual input (its `drug_names` feed retrieval, its `allergies` feed the ingredient check) rather than passing those in separately.
 - `src/medical_guardrails/cli/pipeline_once.py` — the full end-to-end CLI, taking one raw natural-language query and nothing else.
+- `src/medical_guardrails/stage1_slotfill/interactive.py` + `src/medical_guardrails/cli/interactive_prompt_builder.py` — a multi-turn front end onto Stage 1's gate. See "Interactive prompt builder" below.
 - `src/medical_guardrails/common/schemas.py` — shared Pydantic models passed between stages: `StructuredQuery` (Stage 1's output), `EvidenceChunk` (Stage 2's output), `Claim` (Stage 3's output).
 - `src/medical_guardrails/stage1_slotfill/` — `classifier.py` (LLM-based query-type classification + field extraction, using structured-output `format` -- a JSON schema constrains decoding so the reply structurally cannot deviate from it), `required_fields.py` (per-query-type required-fields table + clarifying questions), `gate.py` (`slot_fill_gate()`: ties the two together into a ready/needs_clarification decision).
 - `src/medical_guardrails/stage2_generate/` — `rxnorm_client.py` (name → RxCUI, plus canonical-name lookup), `openfda_client.py` (label text by name: contraindications/warnings/interactions/ingredients), `ddinter_lookup.py` (local offline pairwise interaction severity), `retrieval.py` (combines all three into one evidence list, tagging each chunk's `authority` as `regulatory` (openFDA) or `curated_secondary` (DDInter)), `generation.py` (grounded generation via the configured LLM, with a system prompt that forbids answering outside the retrieved evidence -- and a hard, code-level fallback when there's no evidence at all; see Known limitations).
@@ -108,6 +115,21 @@ export MEDICAL_GUARDRAILS_OPENAI_MODEL=gpt-4o-mini   # default
 `OpenAIClient` is a thin `httpx` wrapper matching `OllamaClient`'s shape (no `openai` SDK dependency, consistent with this project's and `pii_guardrails`' minimal-dependency approach elsewhere). Its `format`-to-`response_format` translation adds `additionalProperties: false` to whatever schema it's given, since OpenAI's strict structured outputs require that and Ollama's grammar-based constraint doesn't -- `classifier.py`'s schema itself stays backend-agnostic.
 
 This makes it straightforward to test whether the Stage 1 extraction-reliability issues documented below (mistral, and to a lesser extent Qwen3-8B) are specific to smaller local models or persist with a stronger hosted one -- run the same `eval/functional_cases.jsonl`/`eval/score.py` cases under each provider and compare, rather than guess.
+
+## Interactive prompt builder
+
+A terminal front end onto Stage 1's gate for watching the multi-turn clarification loop directly, and inspecting exactly what would be sent onward -- without it actually being sent anywhere.
+
+```bash
+python -m medical_guardrails.cli.interactive_prompt_builder
+python -m medical_guardrails.cli.interactive_prompt_builder "Can I take ibuprofen with warfarin?" --max-questions 3
+```
+
+What happens: you type (or pass) an initial query; if anything required is missing, the gate's clarifying question is printed and you answer it at the prompt; your answer is appended to the conversation and the gate re-checks the *whole* accumulated text from scratch (no incremental field-merging -- simpler and more robust than trying to patch a partial `StructuredQuery`, at the cost of a full reclassification call each round). This repeats until every required field resolves or `--max-questions` (default 5) is used up. Once resolved (or the budget runs out -- it still shows you what it has, clearly marked as incomplete), Stage 2's evidence is retrieved for real and the exact message list that would be sent to the generation model is built and **saved to a timestamped file** under `eval/results/interactive_prompts/` -- the model is never actually called. That file shows the full conversation transcript, every extracted field, the evidence chunk count, and the complete system+user prompt Stage 2 would have used, so you can check it before deciding anything should actually be answered.
+
+The multi-turn loop itself (`stage1_slotfill/interactive.py`'s `run_interactive_slot_fill()`) is pure logic with an injected `ask_fn`, decoupled from the terminal -- reusable as-is if this becomes a GUI later without changing how the conversation loop works, only how questions get asked and answered.
+
+Note: this is genuinely new conversation-state behavior the rest of the pipeline doesn't have -- `MedicalGuardrailPipeline.process_query()` (the one-shot path used by `pipeline_once.py`, `eval/score.py`, and the spikee target) still reclassifies fresh on every call with no memory between them. This tool doesn't change that; it's a separate, additive entry point for exploring the gate interactively.
 
 ## Evaluation
 
