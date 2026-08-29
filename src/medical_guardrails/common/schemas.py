@@ -9,20 +9,15 @@ from typing import Literal
 from pydantic import BaseModel
 
 
-class QueryType(str, Enum):
-    DRUG_INTERACTION = "drug_interaction"
-    DOSAGE = "dosage"
-    SYMPTOM = "symptom"
-    HOME_REMEDY = "home_remedy"
-    GENERAL_INFO = "general_info"
+class DomainQuery(BaseModel):
+    """Stage 1's output. `query_type` and `fields` are both domain-defined
+    (see `stage1_slotfill/domain.py` and `stage1_slotfill/domains/medical.py`)
+    -- this model itself doesn't know what a valid query type or field name
+    is for any given domain; that's `required_fields.missing_fields`'s job,
+    parameterized by a `DomainSchema`.
 
-
-class StructuredQuery(BaseModel):
-    """Produced by Stage 1. Fields are mostly optional here because which
-    ones are *required* depends on `query_type`, and that required-fields
-    schema is Stage 1's job to enforce, not this model's.
-
-    For the list-valued fields (allergies, current_medications,
+    For list-valued fields the domain marks `list_with_status` (e.g. this
+    project's medical domain: allergies, current_medications,
     existing_conditions): `None` means the user was never asked / never
     said anything on the topic, while `[]` means they were asked (or
     volunteered) and explicitly said "none". This distinction is the whole
@@ -32,15 +27,8 @@ class StructuredQuery(BaseModel):
     indistinguishable."""
 
     raw_text: str
-    query_type: QueryType
-    drug_names: list[str] = []
-    allergies: list[str] | None = None
-    current_medications: list[str] | None = None
-    age_bracket: str | None = None
-    pregnancy_status: str | None = None
-    symptom_duration: str | None = None
-    symptom_severity: str | None = None
-    existing_conditions: list[str] | None = None
+    query_type: str
+    fields: dict[str, list[str] | str | None] = {}
 
 
 EvidenceSource = str  # "openfda" | "ddinter" | "medlineplus" in practice today -- RxNorm is used

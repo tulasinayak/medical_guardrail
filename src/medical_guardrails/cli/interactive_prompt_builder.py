@@ -34,7 +34,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from medical_guardrails.common.schemas import StructuredQuery
+from medical_guardrails.common.schemas import DomainQuery
 from medical_guardrails.config import Settings
 from medical_guardrails.llm.factory import build_llm_client
 from medical_guardrails.stage1_slotfill.interactive import (
@@ -155,9 +155,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n--- Stage 1: {status} after {result.questions_asked} question(s) ---")
     print(f"Extracted: {result.structured_query.model_dump(exclude={'raw_text'})}")
 
-    query: StructuredQuery = result.structured_query
+    query: DomainQuery = result.structured_query
     evidence = retrieve_evidence(
-        drug_names=query.drug_names,
+        drug_names=query.fields.get("drug_names") or [],
         rxnorm_client=RxNormClient(settings.rxnorm_base_url, settings.http_timeout_seconds),
         openfda_client=OpenFDAClient(settings.openfda_base_url, settings.http_timeout_seconds),
         ddinter_lookup=DDInterLookup(settings.ddinter_db_path),
@@ -179,7 +179,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Stage 2 draft:\n{draft_response}")
 
         print("\nRunning Stage 3 (verification)...")
-        verification = verify_response(draft_response, evidence, query.allergies or [], llm_client)
+        verification = verify_response(
+            draft_response, evidence, query.fields.get("allergies") or [], llm_client
+        )
         print(f"Stage 3 action: {verification.action}")
 
     output_path = (

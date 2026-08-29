@@ -3,9 +3,8 @@ from unittest.mock import MagicMock, patch
 from medical_guardrails.common.schemas import (
     Claim,
     ClaimVerdict,
+    DomainQuery,
     EvidenceChunk,
-    QueryType,
-    StructuredQuery,
 )
 from medical_guardrails.orchestrator import MedicalGuardrailPipeline
 from medical_guardrails.stage1_slotfill.gate import GateResult
@@ -18,8 +17,10 @@ def _pipeline():
 
 @patch("medical_guardrails.orchestrator.slot_fill_gate")
 def test_stops_at_clarification_without_calling_generation_or_verification(mock_gate):
-    query = StructuredQuery(
-        raw_text="x", query_type=QueryType.DRUG_INTERACTION, drug_names=["ibuprofen"], allergies=None
+    query = DomainQuery(
+        raw_text="x",
+        query_type="drug_interaction",
+        fields={"drug_names": ["ibuprofen"], "allergies": None},
     )
     mock_gate.return_value = GateResult(
         "needs_clarification", query, ["allergies"], "Do you have any allergies?"
@@ -48,12 +49,14 @@ def test_stops_at_clarification_without_calling_generation_or_verification(mock_
 def test_ready_query_runs_full_generation_and_verification(
     mock_gate, mock_retrieve, mock_generate, mock_verify
 ):
-    query = StructuredQuery(
+    query = DomainQuery(
         raw_text="Can I take ibuprofen with warfarin?",
-        query_type=QueryType.DRUG_INTERACTION,
-        drug_names=["ibuprofen", "warfarin"],
-        allergies=["lactose"],
-        age_bracket="adult",
+        query_type="drug_interaction",
+        fields={
+            "drug_names": ["ibuprofen", "warfarin"],
+            "allergies": ["lactose"],
+            "age_bracket": "adult",
+        },
     )
     mock_gate.return_value = GateResult("ready", query, [], None)
 
@@ -97,7 +100,7 @@ def test_none_allergies_passed_as_empty_list_to_verification(
     mock_gate, mock_retrieve, mock_generate, mock_verify
 ):
     # GENERAL_INFO doesn't require allergies, so a "ready" query can still have allergies=None
-    query = StructuredQuery(raw_text="What is ibuprofen?", query_type=QueryType.GENERAL_INFO, allergies=None)
+    query = DomainQuery(raw_text="What is ibuprofen?", query_type="general_info", fields={"allergies": None})
     mock_gate.return_value = GateResult("ready", query, [], None)
     mock_retrieve.return_value = []
     mock_generate.return_value = "draft"

@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from medical_guardrails.common.schemas import EvidenceChunk, StructuredQuery
+from medical_guardrails.common.schemas import DomainQuery, EvidenceChunk
 from medical_guardrails.config import Settings
 from medical_guardrails.llm.base import LLMClient
 from medical_guardrails.llm.factory import build_llm_client
@@ -39,7 +39,7 @@ PipelineStatus = Literal["needs_clarification", "answered"]
 @dataclass
 class PipelineResult:
     status: PipelineStatus
-    structured_query: StructuredQuery
+    structured_query: DomainQuery
     missing_fields: list[str] = field(default_factory=list)
     clarifying_question: str | None = None
     evidence: list[EvidenceChunk] = field(default_factory=list)
@@ -79,7 +79,7 @@ class MedicalGuardrailPipeline:
 
         query = gate_result.structured_query
         evidence = retrieve_evidence(
-            drug_names=query.drug_names,
+            drug_names=query.fields.get("drug_names") or [],
             rxnorm_client=self.rxnorm_client,
             openfda_client=self.openfda_client,
             ddinter_lookup=self.ddinter_lookup,
@@ -89,7 +89,7 @@ class MedicalGuardrailPipeline:
         )
 
         draft = generate_grounded_response(query.raw_text, evidence, self.llm_client)
-        verification = verify_response(draft, evidence, query.allergies or [], self.llm_client)
+        verification = verify_response(draft, evidence, query.fields.get("allergies") or [], self.llm_client)
 
         return PipelineResult(
             status="answered",

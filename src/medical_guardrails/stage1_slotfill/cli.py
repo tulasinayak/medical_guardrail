@@ -22,7 +22,7 @@ def main(argv: list[str] | None = None) -> None:
     llm_client = build_llm_client(settings)
     result = slot_fill_gate(args.query, llm_client)
 
-    print(f"Query type: {result.structured_query.query_type.value}")
+    print(f"Query type: {result.structured_query.query_type}")
     print(f"Extracted: {result.structured_query.model_dump(exclude={'raw_text'})}")
     print(f"Status: {result.status}")
     if result.status == "needs_clarification":

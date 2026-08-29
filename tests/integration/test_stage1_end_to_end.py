@@ -29,4 +29,4 @@ def test_explicit_no_allergies_is_recognized(llm_client):
     result = slot_fill_gate(
         "Can I take ibuprofen with warfarin? I have no allergies.", llm_client
     )
-    assert result.structured_query.allergies == []
+    assert result.structured_query.fields["allergies"] == []

@@ -1,20 +1,14 @@
 from unittest.mock import patch
 
-from medical_guardrails.common.schemas import QueryType, StructuredQuery
+from medical_guardrails.common.schemas import DomainQuery
 from medical_guardrails.stage1_slotfill.gate import GateResult
 from medical_guardrails.stage1_slotfill.interactive import run_interactive_slot_fill
 
 
-def _query(**overrides) -> StructuredQuery:
-    base = dict(
-        raw_text="x",
-        query_type=QueryType.DRUG_INTERACTION,
-        drug_names=["ibuprofen", "warfarin"],
-        allergies=None,
-        age_bracket=None,
-    )
-    base.update(overrides)
-    return StructuredQuery(**base)
+def _query(**field_overrides) -> DomainQuery:
+    fields = dict(drug_names=["ibuprofen", "warfarin"], allergies=None, age_bracket=None)
+    fields.update(field_overrides)
+    return DomainQuery(raw_text="x", query_type="drug_interaction", fields=fields)
 
 
 @patch("medical_guardrails.stage1_slotfill.interactive.slot_fill_gate")
@@ -37,7 +31,7 @@ def test_resolves_after_one_answer(mock_gate):
 
     assert result.resolved is True
     assert result.questions_asked == 1
-    assert result.structured_query.allergies == []
+    assert result.structured_query.fields["allergies"] == []
     assert "Can I take ibuprofen with warfarin?" in result.conversation_text
     assert "No allergies, I'm an adult." in result.conversation_text
 

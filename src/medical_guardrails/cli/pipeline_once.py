@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result = pipeline.process_query(query)
 
-    print(f"Query type: {result.structured_query.query_type.value}", file=sys.stderr)
+    print(f"Query type: {result.structured_query.query_type}", file=sys.stderr)
 
     if result.status == "needs_clarification":
         print(f"Missing fields: {result.missing_fields}", file=sys.stderr)

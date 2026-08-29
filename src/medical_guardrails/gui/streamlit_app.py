@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from medical_guardrails.common.schemas import StructuredQuery
+from medical_guardrails.common.schemas import DomainQuery
 from medical_guardrails.config import Settings
 from medical_guardrails.llm.factory import build_llm_client
 from medical_guardrails.stage1_slotfill.gate import slot_fill_gate
@@ -173,14 +173,14 @@ def _stage_review_prompt() -> None:
             "still unresolved. You can still review and approve the prompt below, or start over."
         )
 
-    query: StructuredQuery = st.session_state.structured_query
+    query: DomainQuery = st.session_state.structured_query
     with st.expander("Extracted fields (Stage 1 output)", expanded=False):
         st.json(query.model_dump(exclude={"raw_text"}))
 
     if st.session_state.evidence is None:
         with st.spinner("Retrieving evidence..."):
             st.session_state.evidence = retrieve_evidence(
-                drug_names=query.drug_names,
+                drug_names=query.fields.get("drug_names") or [],
                 rxnorm_client=_rxnorm_client(),
                 openfda_client=_openfda_client(),
                 ddinter_lookup=_ddinter_lookup(),
@@ -220,7 +220,7 @@ def _stage_review_prompt() -> None:
 
 
 def _stage_generating() -> None:
-    query: StructuredQuery = st.session_state.structured_query
+    query: DomainQuery = st.session_state.structured_query
     try:
         with st.spinner("Running Stage 2 (generation)..."):
             st.session_state.draft_response = generate_grounded_response(
@@ -230,7 +230,7 @@ def _stage_generating() -> None:
             st.session_state.verification = verify_response(
                 st.session_state.draft_response,
                 st.session_state.evidence,
-                query.allergies or [],
+                query.fields.get("allergies") or [],
                 _llm_client(),
             )
         st.session_state.stage = "result"

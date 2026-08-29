@@ -1,5 +1,5 @@
 """Manual test entry point for Stage 2 alone (Stage 1 doesn't exist yet, so
-this takes drug names directly rather than a full StructuredQuery).
+this takes drug names directly rather than a full DomainQuery).
 
 Usage:
     python -m medical_guardrails.stage2_generate.cli ibuprofen warfarin
