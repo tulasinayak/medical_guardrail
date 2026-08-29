@@ -114,6 +114,8 @@ export MEDICAL_GUARDRAILS_OPENAI_MODEL=gpt-4o-mini   # default
 ```
 `OpenAIClient` is a thin `httpx` wrapper matching `OllamaClient`'s shape (no `openai` SDK dependency, consistent with this project's and `pii_guardrails`' minimal-dependency approach elsewhere). Its `format`-to-`response_format` translation adds `additionalProperties: false` to whatever schema it's given, since OpenAI's strict structured outputs require that and Ollama's grammar-based constraint doesn't -- `classifier.py`'s schema itself stays backend-agnostic.
 
+**Alternative OpenAI model -- GPT-5.6 Luna**: set `MEDICAL_GUARDRAILS_OPENAI_MODEL=gpt-5.6-luna` to try OpenAI's cost-efficient GPT-5.6-family model instead of the `gpt-4o-mini` default. OpenAI claims 62% fewer factual errors than the prior default model (GPT-5.5 Instant); it supports both Chat Completions and structured outputs, so it's a drop-in swap with no other config changes. Opt-in only -- the default stays `gpt-4o-mini`, and this hasn't been benchmarked against it on this project's own eval cases yet.
+
 This makes it straightforward to test whether the Stage 1 extraction-reliability issues documented below (mistral, and to a lesser extent Qwen3-8B) are specific to smaller local models or persist with a stronger hosted one -- run the same `eval/functional_cases.jsonl`/`eval/score.py` cases under each provider and compare, rather than guess.
 
 ## Interactive prompt builder
