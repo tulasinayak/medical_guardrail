@@ -43,8 +43,8 @@ class StructuredQuery(BaseModel):
     existing_conditions: list[str] | None = None
 
 
-EvidenceSource = str  # "openfda" | "ddinter" in practice today -- RxNorm is used only for
-# identity resolution (name -> RxCUI -> canonical name) and never itself surfaced as an
+EvidenceSource = str  # "openfda" | "ddinter" | "medlineplus" in practice today -- RxNorm is used
+# only for identity resolution (name -> RxCUI -> canonical name) and never itself surfaced as an
 # evidence chunk, so "rxnorm" doesn't currently occur as a value here.
 
 EvidenceAuthority = Literal["regulatory", "curated_secondary"]
@@ -55,9 +55,10 @@ class EvidenceChunk(BaseModel):
     Stage 2's generation is grounded in and Stage 3 will later verify
     claims against.
 
-    `authority` distinguishes an FDA label statement (regulatory,
-    authoritative) from a DDInter interaction classification (a curated but
-    secondary database) -- the two aren't interchangeable evidence, even
+    `authority` distinguishes an FDA label statement or an NLM/MedlinePlus
+    health topic summary (both regulatory/government-authoritative) from a
+    DDInter interaction classification (a curated but secondary database)
+    -- the two aren't interchangeable evidence, even
     though both are currently treated as equally checkable by Stage 3. This
     tag doesn't yet drive any weighting/scoring logic; it exists so a future
     version of Stage 3 can reason about which kind of source backed a given

@@ -44,6 +44,7 @@ from medical_guardrails.stage1_slotfill.interactive import (
 )
 from medical_guardrails.stage2_generate.ddinter_lookup import DDInterLookup
 from medical_guardrails.stage2_generate.generation import build_generation_messages, generate_grounded_response
+from medical_guardrails.stage2_generate.medlineplus_client import MedlinePlusClient
 from medical_guardrails.stage2_generate.openfda_client import OpenFDAClient
 from medical_guardrails.stage2_generate.retrieval import retrieve_evidence
 from medical_guardrails.stage2_generate.rxnorm_client import RxNormClient
@@ -160,6 +161,9 @@ def main(argv: list[str] | None = None) -> int:
         rxnorm_client=RxNormClient(settings.rxnorm_base_url, settings.http_timeout_seconds),
         openfda_client=OpenFDAClient(settings.openfda_base_url, settings.http_timeout_seconds),
         ddinter_lookup=DDInterLookup(settings.ddinter_db_path),
+        symptom_query_text=result.conversation_text,
+        medlineplus_client=MedlinePlusClient(settings.medlineplus_base_url, settings.http_timeout_seconds),
+        llm_client=llm_client,
     )
     print(f"Retrieved {len(evidence)} evidence chunks for Stage 2")
 

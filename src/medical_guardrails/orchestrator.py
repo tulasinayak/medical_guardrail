@@ -4,14 +4,15 @@ whether Stage 2 (retrieval + grounded generation) runs at all, and Stage 3
 (claim + ingredient verification) gates what Stage 2 produces before it
 reaches the caller.
 
-Scope note: evidence retrieval is drug-name-centric (RxNorm/openFDA/
-DDInter). `structured_query.drug_names` is passed to retrieval regardless
-of query_type, since retrieval itself is type-agnostic -- for query types
-where the user didn't name a drug (most symptom/home_remedy/general_info
-queries), evidence will simply be empty and Stage 2's system prompt
-correctly falls back to "not in my sources" rather than answering from
-parametric memory. This project does not yet implement a symptom- or
-recipe-specific evidence source -- see README "Known limitations".
+Scope note: evidence retrieval is mostly drug-name-centric (RxNorm/openFDA/
+DDInter). For query types where the user didn't name a drug (most symptom/
+home_remedy/general_info queries), `retrieve_evidence` falls back to a
+MedlinePlus health-topic lookup instead -- see retrieval.py and
+medlineplus_client.py. A pure recipe/home-remedy question with no
+identifiable symptom or drug topic can still end up with no evidence at
+all, in which case Stage 2 correctly falls back to "not in my sources"
+rather than answering from parametric memory -- see README "Known
+limitations".
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from medical_guardrails.llm.factory import build_llm_client
 from medical_guardrails.stage1_slotfill.gate import slot_fill_gate
 from medical_guardrails.stage2_generate.ddinter_lookup import DDInterLookup
 from medical_guardrails.stage2_generate.generation import generate_grounded_response
+from medical_guardrails.stage2_generate.medlineplus_client import MedlinePlusClient
 from medical_guardrails.stage2_generate.openfda_client import OpenFDAClient
 from medical_guardrails.stage2_generate.retrieval import retrieve_evidence
 from medical_guardrails.stage2_generate.rxnorm_client import RxNormClient
@@ -60,6 +62,9 @@ class MedicalGuardrailPipeline:
         self.rxnorm_client = RxNormClient(self.settings.rxnorm_base_url, self.settings.http_timeout_seconds)
         self.openfda_client = OpenFDAClient(self.settings.openfda_base_url, self.settings.http_timeout_seconds)
         self.ddinter_lookup = DDInterLookup(self.settings.ddinter_db_path)
+        self.medlineplus_client = MedlinePlusClient(
+            self.settings.medlineplus_base_url, self.settings.http_timeout_seconds
+        )
 
     def process_query(self, raw_text: str) -> PipelineResult:
         gate_result = slot_fill_gate(raw_text, self.llm_client)
@@ -78,6 +83,9 @@ class MedicalGuardrailPipeline:
             rxnorm_client=self.rxnorm_client,
             openfda_client=self.openfda_client,
             ddinter_lookup=self.ddinter_lookup,
+            symptom_query_text=query.raw_text,
+            medlineplus_client=self.medlineplus_client,
+            llm_client=self.llm_client,
         )
 
         draft = generate_grounded_response(query.raw_text, evidence, self.llm_client)

@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     rxnorm_base_url: str = "https://rxnav.nlm.nih.gov/REST"
     openfda_base_url: str = "https://api.fda.gov/drug/label.json"
+    medlineplus_base_url: str = "https://wsearch.nlm.nih.gov/ws/query"
     http_timeout_seconds: float = 15.0
 
     ddinter_db_path: Path = DEFAULT_DDINTER_DB_PATH

@@ -51,3 +51,58 @@ def test_no_ddinter_chunk_when_pair_not_found():
 
     chunks = retrieve_evidence(["a", "b"], rxnorm, openfda, ddinter)
     assert chunks == []
+
+
+def test_falls_back_to_medlineplus_when_no_drug_names():
+    rxnorm, openfda, ddinter = MagicMock(), MagicMock(), MagicMock()
+    llm_client = MagicMock()
+    llm_client.chat.return_value = "back pain"
+    medlineplus = MagicMock()
+    medlineplus.search_health_topics.return_value = [
+        {"title": "Back Pain", "summary": "Rest and OTC pain relievers can help.", "url": "https://x"}
+    ]
+
+    chunks = retrieve_evidence(
+        [],
+        rxnorm,
+        openfda,
+        ddinter,
+        symptom_query_text="my back is paining, what to do?",
+        medlineplus_client=medlineplus,
+        llm_client=llm_client,
+    )
+
+    assert len(chunks) == 1
+    assert chunks[0].source == "medlineplus"
+    assert chunks[0].authority == "regulatory"
+    assert "Back Pain" in chunks[0].text
+    medlineplus.search_health_topics.assert_called_once_with("back pain")
+
+
+def test_no_medlineplus_lookup_when_drug_names_present():
+    rxnorm = MagicMock()
+    rxnorm.find_rxcui.side_effect = RxNormNotFoundError("nope")
+    openfda, ddinter = MagicMock(), MagicMock()
+    ddinter.find_interaction.return_value = None
+    medlineplus = MagicMock()
+    llm_client = MagicMock()
+
+    chunks = retrieve_evidence(
+        ["not-a-real-drug"],
+        rxnorm,
+        openfda,
+        ddinter,
+        symptom_query_text="does not matter",
+        medlineplus_client=medlineplus,
+        llm_client=llm_client,
+    )
+
+    assert chunks == []
+    medlineplus.search_health_topics.assert_not_called()
+    llm_client.chat.assert_not_called()
+
+
+def test_no_medlineplus_lookup_when_clients_not_provided():
+    rxnorm, openfda, ddinter = MagicMock(), MagicMock(), MagicMock()
+    chunks = retrieve_evidence([], rxnorm, openfda, ddinter, symptom_query_text="back pain")
+    assert chunks == []
