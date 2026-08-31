@@ -1,4 +1,4 @@
-"""Multi-turn slot-filling: repeatedly runs the single-shot gate
+"""Multi-turn Context Guardrail: repeatedly runs the single-shot gate
 (gate.py's slot_fill_gate), feeding each answer back into the accumulated
 conversation text, until every required field is resolved or a question
 budget runs out.
@@ -20,10 +20,10 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from medical_guardrails.common.schemas import DomainQuery
+from medical_guardrails.context_guardrail.domain import DomainSchema
+from medical_guardrails.context_guardrail.domains.medical import MEDICAL_DOMAIN
+from medical_guardrails.context_guardrail.gate import slot_fill_gate
 from medical_guardrails.llm.base import LLMClient
-from medical_guardrails.stage1_slotfill.domain import DomainSchema
-from medical_guardrails.stage1_slotfill.domains.medical import MEDICAL_DOMAIN
-from medical_guardrails.stage1_slotfill.gate import slot_fill_gate
 
 DEFAULT_MAX_QUESTIONS = 5
 
@@ -37,6 +37,7 @@ class InteractiveSlotFillResult:
     conversation_text: str
     transcript: list[TranscriptEntry] = field(default_factory=list)
     questions_asked: int = 0
+    missing: list[str] = field(default_factory=list)
 
 
 def run_interactive_slot_fill(
@@ -65,4 +66,5 @@ def run_interactive_slot_fill(
         conversation_text=conversation_text,
         transcript=transcript,
         questions_asked=questions_asked,
+        missing=gate_result.missing,
     )

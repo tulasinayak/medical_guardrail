@@ -1,7 +1,7 @@
-"""The pre-generation gate: classify + extract, then either hand back a
-ready DomainQuery or a clarifying question -- never both, and generation
-must not proceed on "needs_clarification". Domain-parametrized (defaults
-to the medical domain) -- see stage1_slotfill/domain.py.
+"""The Context Guardrail: classify + extract, then either hand back a
+ready DomainQuery or a clarifying question -- never both, and Main LLM
+must not run on "needs_clarification". Domain-parametrized (defaults to
+the medical domain) -- see context_guardrail/domain.py.
 """
 
 from __future__ import annotations
@@ -10,11 +10,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from medical_guardrails.common.schemas import DomainQuery
+from medical_guardrails.context_guardrail.classifier import extract_structured_query
+from medical_guardrails.context_guardrail.domain import DomainSchema
+from medical_guardrails.context_guardrail.domains.medical import MEDICAL_DOMAIN
+from medical_guardrails.context_guardrail.required_fields import missing_fields
 from medical_guardrails.llm.base import LLMClient
-from medical_guardrails.stage1_slotfill.classifier import extract_structured_query
-from medical_guardrails.stage1_slotfill.domain import DomainSchema
-from medical_guardrails.stage1_slotfill.domains.medical import MEDICAL_DOMAIN
-from medical_guardrails.stage1_slotfill.required_fields import missing_fields
 
 GateStatus = Literal["ready", "needs_clarification"]
 

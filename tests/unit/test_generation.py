@@ -1,37 +1,52 @@
 from unittest.mock import MagicMock
 
-from medical_guardrails.common.schemas import EvidenceChunk
-from medical_guardrails.stage2_generate.generation import NOT_IN_SOURCES_FALLBACK, generate_grounded_response
+from medical_guardrails.main_llm.generation import generate_answer
 
 
-def test_passes_system_prompt_and_formatted_evidence_to_llm():
+def test_passes_system_prompt_request_and_context_to_llm():
     llm_client = MagicMock()
-    llm_client.chat.return_value = "Yes, there is a major interaction."
+    llm_client.chat.return_value = "Yes, that's generally fine for adults."
 
-    evidence = [
-        EvidenceChunk(
-            source="ddinter",
-            authority="curated_secondary",
-            drug_names=["ibuprofen", "warfarin"],
-            field_name="interaction_severity",
-            text="ibuprofen and warfarin have a documented major interaction.",
-        )
-    ]
+    reply = generate_answer(
+        "Can I take ibuprofen?", {"age_bracket": "adult", "allergies": []}, [], llm_client
+    )
 
-    reply = generate_grounded_response("Any interaction?", evidence, llm_client)
-
-    assert reply == "Yes, there is a major interaction."
+    assert reply == "Yes, that's generally fine for adults."
     messages = llm_client.chat.call_args[0][0]
     assert messages[0]["role"] == "system"
-    assert "ONLY" in messages[0]["content"]
-    assert "ddinter" in messages[1]["content"]
-    assert "Any interaction?" in messages[1]["content"]
+    assert "Can I take ibuprofen?" in messages[1]["content"]
+    assert "age_bracket: adult" in messages[1]["content"]
 
 
-def test_empty_evidence_returns_fallback_without_calling_llm():
+def test_empty_and_none_context_values_are_omitted():
     llm_client = MagicMock()
+    llm_client.chat.return_value = "ok"
 
-    reply = generate_grounded_response("Any interaction?", [], llm_client)
+    generate_answer("x", {"allergies": None, "current_medications": [], "age_bracket": "adult"}, [], llm_client)
 
-    assert NOT_IN_SOURCES_FALLBACK in reply
-    llm_client.chat.assert_not_called()
+    user_message = llm_client.chat.call_args[0][0][1]["content"]
+    assert "allergies" not in user_message
+    assert "current_medications" not in user_message
+    assert "age_bracket: adult" in user_message
+
+
+def test_no_known_context_says_so_explicitly():
+    llm_client = MagicMock()
+    llm_client.chat.return_value = "ok"
+
+    generate_answer("What is ibuprofen?", {}, [], llm_client)
+
+    user_message = llm_client.chat.call_args[0][0][1]["content"]
+    assert "(none provided)" in user_message
+
+
+def test_unresolved_fields_are_named_in_the_prompt():
+    llm_client = MagicMock()
+    llm_client.chat.return_value = "ok"
+
+    generate_answer("Can I take ibuprofen?", {}, ["allergies", "age_bracket"], llm_client)
+
+    user_message = llm_client.chat.call_args[0][0][1]["content"]
+    assert "allergies" in user_message
+    assert "age_bracket" in user_message
+    assert "NOT PROVIDED" in user_message

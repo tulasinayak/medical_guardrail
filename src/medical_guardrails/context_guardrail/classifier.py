@@ -21,7 +21,9 @@ Fails closed: if the reply isn't valid JSON matching the expected shape (a
 model/version that ignores `format`, or a malformed edge case), or names a
 query type the domain doesn't recognize, defaults to the domain's
 `fail_closed_query_type` (for the medical domain: DRUG_INTERACTION, the
-type with the most required fields) rather than one requiring nothing. An
+type with the most required fields) rather than one requiring nothing.
+Same principle for `answer_scope`: an unparseable reply defaults to
+"personal" (more questions asked), never "general" (fewer). An
 unclassifiable query should trigger *more* scrutiny, not less.
 """
 
@@ -31,13 +33,16 @@ import json
 
 from medical_guardrails.common.schemas import DomainQuery
 from medical_guardrails.llm.base import LLMClient
-from medical_guardrails.stage1_slotfill.domain import DomainSchema
-from medical_guardrails.stage1_slotfill.domains.medical import MEDICAL_DOMAIN
+from medical_guardrails.context_guardrail.domain import DomainSchema
+from medical_guardrails.context_guardrail.domains.medical import MEDICAL_DOMAIN
 
 _STATUS_NOT_MENTIONED = "NOT_MENTIONED"
 _STATUS_STATED_NONE = "STATED_NONE"
 _STATUS_STATED_PRESENT = "STATED_PRESENT"
 _STATUS_VALUES = [_STATUS_NOT_MENTIONED, _STATUS_STATED_NONE, _STATUS_STATED_PRESENT]
+
+_ANSWER_SCOPES = ["general", "personal"]
+_FAIL_CLOSED_ANSWER_SCOPE = "personal"  # more scrutiny, not less, on an unparseable reply
 
 
 def build_response_schema(domain: DomainSchema) -> dict:
@@ -48,9 +53,16 @@ def build_response_schema(domain: DomainSchema) -> dict:
     the more compact schema but not all constrained-decoding backends
     support it reliably, and splitting the two concerns also makes the
     model's job simpler: one enum choice, then (if applicable) a plain
-    list."""
-    properties: dict = {"query_type": {"type": "string", "enum": list(domain.query_types)}}
-    required = ["query_type"]
+    list.
+
+    `answer_scope` is domain-agnostic (every domain gets it, not just
+    fields the domain declares) since it's about whether personal context
+    is needed at all, not a fact any particular domain extracts."""
+    properties: dict = {
+        "query_type": {"type": "string", "enum": list(domain.query_types)},
+        "answer_scope": {"type": "string", "enum": _ANSWER_SCOPES},
+    }
+    required = ["query_type", "answer_scope"]
 
     for name, spec in domain.fields.items():
         if spec.kind == "list_plain":
@@ -105,4 +117,13 @@ def extract_structured_query(
     if query_type not in domain.query_types:
         query_type = domain.fail_closed_query_type
 
-    return DomainQuery(raw_text=raw_text, query_type=query_type, fields=_extract_fields(data, domain))
+    answer_scope = data.get("answer_scope")
+    if answer_scope not in _ANSWER_SCOPES:
+        answer_scope = _FAIL_CLOSED_ANSWER_SCOPE
+
+    return DomainQuery(
+        raw_text=raw_text,
+        query_type=query_type,
+        answer_scope=answer_scope,
+        fields=_extract_fields(data, domain),
+    )

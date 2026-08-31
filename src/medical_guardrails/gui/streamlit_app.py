@@ -1,11 +1,9 @@
-"""Streamlit GUI for the medical guardrail pipeline.
-
-Same 3-stage flow as cli/interactive_prompt_builder.py (Stage 1 slot-filling
-Q&A -> Stage 2 grounded generation -> Stage 3 claim/ingredient verification),
-plus one checkpoint the CLI tool doesn't have: once Stage 1 resolves, the
-exact prompt that would be sent to the generation model is shown to the
-user, and nothing is sent to that model until the user clicks "Approve &
-send to model".
+"""Streamlit GUI: Context Guardrail Q&A -> Main LLM answer, plus one
+checkpoint the CLI tool doesn't have -- once the Context Guardrail is
+satisfied (or its question budget runs out), the exact prompt that would
+be sent to Main LLM is shown to the user, and nothing is sent until the
+user clicks "Approve & send to Main LLM". The medical domain's ingredient/
+allergy safety check runs after Main LLM answers, if applicable.
 
 Run with:
     python -m streamlit run src/medical_guardrails/gui/streamlit_app.py
@@ -17,15 +15,11 @@ import streamlit as st
 
 from medical_guardrails.common.schemas import DomainQuery
 from medical_guardrails.config import Settings
+from medical_guardrails.context_guardrail.gate import slot_fill_gate
 from medical_guardrails.llm.factory import build_llm_client
-from medical_guardrails.stage1_slotfill.gate import slot_fill_gate
-from medical_guardrails.stage2_generate.ddinter_lookup import DDInterLookup
-from medical_guardrails.stage2_generate.generation import build_generation_messages, generate_grounded_response
-from medical_guardrails.stage2_generate.medlineplus_client import MedlinePlusClient
-from medical_guardrails.stage2_generate.openfda_client import OpenFDAClient
-from medical_guardrails.stage2_generate.retrieval import retrieve_evidence
-from medical_guardrails.stage2_generate.rxnorm_client import RxNormClient
-from medical_guardrails.stage3_verify.verification import verify_response
+from medical_guardrails.main_llm.generation import build_messages, generate_answer
+from medical_guardrails.medical.ingredient_safety import check_drug_allergy_conflicts
+from medical_guardrails.medical.openfda_client import OpenFDAClient
 
 MAX_QUESTIONS = 5
 TIMEOUT_HINT = (
@@ -33,7 +27,7 @@ TIMEOUT_HINT = (
     "value (e.g. 300) in the terminal you launched this app from, then restart it."
 )
 
-st.set_page_config(page_title="Medical Guardrail", page_icon="🛡️", layout="centered")
+st.set_page_config(page_title="Context Guardrail", page_icon="🛡️", layout="centered")
 
 
 @st.cache_resource
@@ -47,26 +41,9 @@ def _llm_client():
 
 
 @st.cache_resource
-def _rxnorm_client() -> RxNormClient:
-    s = _settings()
-    return RxNormClient(s.rxnorm_base_url, s.http_timeout_seconds)
-
-
-@st.cache_resource
 def _openfda_client() -> OpenFDAClient:
     s = _settings()
     return OpenFDAClient(s.openfda_base_url, s.http_timeout_seconds)
-
-
-@st.cache_resource
-def _ddinter_lookup() -> DDInterLookup:
-    return DDInterLookup(_settings().ddinter_db_path)
-
-
-@st.cache_resource
-def _medlineplus_client() -> MedlinePlusClient:
-    s = _settings()
-    return MedlinePlusClient(s.medlineplus_base_url, s.http_timeout_seconds)
 
 
 def _reset() -> None:
@@ -82,34 +59,36 @@ def _init_state() -> None:
     st.session_state.setdefault("current_question", None)
     st.session_state.setdefault("structured_query", None)
     st.session_state.setdefault("resolved", False)
-    st.session_state.setdefault("evidence", None)
+    st.session_state.setdefault("missing", [])
     st.session_state.setdefault("messages", None)
-    st.session_state.setdefault("draft_response", None)
-    st.session_state.setdefault("verification", None)
+    st.session_state.setdefault("answer", None)
+    st.session_state.setdefault("ingredient_check", None)
     st.session_state.setdefault("error", None)
 
 
 def _advance_gate() -> None:
-    """Call the Stage 1 gate once against the current conversation text.
-    On success: either move to the prompt-review checkpoint (resolved, or
-    the question budget ran out -- mirroring the CLI tool's documented
-    "inspect a partial state" behavior) or ask the next question. On
-    failure (e.g. an LLM timeout), record the error and leave the stage
-    untouched so the caller can offer a retry.
+    """Call the Context Guardrail once against the current conversation
+    text. On success: either move to the prompt-review checkpoint
+    (resolved, or the question budget ran out -- the answer will
+    explicitly say what it couldn't personalize) or ask the next
+    question. On failure (e.g. an LLM timeout), record the error and
+    leave the stage untouched so the caller can offer a retry.
     """
     try:
         gate_result = slot_fill_gate(st.session_state.conversation_text, _llm_client())
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user, not swallowed
-        st.session_state.error = f"Stage 1 call failed: {exc}\n\n{TIMEOUT_HINT}"
+        st.session_state.error = f"Context Guardrail call failed: {exc}\n\n{TIMEOUT_HINT}"
         return
 
     if gate_result.status == "ready":
         st.session_state.structured_query = gate_result.structured_query
         st.session_state.resolved = True
+        st.session_state.missing = []
         st.session_state.stage = "review_prompt"
     elif st.session_state.questions_asked >= MAX_QUESTIONS:
         st.session_state.structured_query = gate_result.structured_query
         st.session_state.resolved = False
+        st.session_state.missing = gate_result.missing
         st.session_state.stage = "review_prompt"
     else:
         st.session_state.current_question = gate_result.clarifying_question
@@ -124,10 +103,11 @@ def _render_transcript() -> None:
 
 def _stage_input() -> None:
     st.caption(
-        "Stage 1 will ask up to 5 clarifying questions, then you'll see the exact prompt "
-        "before it's sent to the generation model -- nothing is sent without your approval."
+        "The Context Guardrail will ask up to 5 clarifying questions if the request needs them, "
+        "then you'll see the exact prompt before it's sent to Main LLM -- nothing is sent without "
+        "your approval."
     )
-    query = st.chat_input("Your medical question")
+    query = st.chat_input("Your question")
     if query:
         st.session_state.error = None
         st.session_state.conversation_text = query.strip()
@@ -169,32 +149,21 @@ def _stage_review_prompt() -> None:
 
     if not st.session_state.resolved:
         st.warning(
-            f"Stage 1 asked {st.session_state.questions_asked} question(s) but some fields are "
-            "still unresolved. You can still review and approve the prompt below, or start over."
+            f"The Context Guardrail asked {st.session_state.questions_asked} question(s) but "
+            f"these are still unresolved: {st.session_state.missing}. Main LLM will be told this "
+            "explicitly and asked to say what it can't personalize -- or start over instead."
         )
 
     query: DomainQuery = st.session_state.structured_query
-    with st.expander("Extracted fields (Stage 1 output)", expanded=False):
+    with st.expander("Extracted fields (Context Guardrail output)", expanded=False):
         st.json(query.model_dump(exclude={"raw_text"}))
 
-    if st.session_state.evidence is None:
-        with st.spinner("Retrieving evidence..."):
-            st.session_state.evidence = retrieve_evidence(
-                drug_names=query.fields.get("drug_names") or [],
-                rxnorm_client=_rxnorm_client(),
-                openfda_client=_openfda_client(),
-                ddinter_lookup=_ddinter_lookup(),
-                symptom_query_text=st.session_state.conversation_text,
-                medlineplus_client=_medlineplus_client(),
-                llm_client=_llm_client(),
-            )
-            st.session_state.messages = build_generation_messages(
-                st.session_state.conversation_text, st.session_state.evidence
-            )
+    if st.session_state.messages is None:
+        st.session_state.messages = build_messages(
+            st.session_state.conversation_text, query.fields, st.session_state.missing
+        )
 
-    st.info(f"Retrieved {len(st.session_state.evidence)} evidence chunk(s) for this prompt.")
-
-    st.subheader("Prompt that will be sent to the generation model")
+    st.subheader("Prompt that will be sent to Main LLM")
     st.caption("Review this before it goes to the model. Nothing is sent until you approve.")
     for message in st.session_state.messages:
         st.markdown(f"**{message['role'].upper()}**")
@@ -209,7 +178,7 @@ def _stage_review_prompt() -> None:
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Approve & send to model", type="primary"):
+        if st.button("Approve & send to Main LLM", type="primary"):
             st.session_state.error = None
             st.session_state.stage = "generating"
             st.rerun()
@@ -222,41 +191,42 @@ def _stage_review_prompt() -> None:
 def _stage_generating() -> None:
     query: DomainQuery = st.session_state.structured_query
     try:
-        with st.spinner("Running Stage 2 (generation)..."):
-            st.session_state.draft_response = generate_grounded_response(
-                st.session_state.conversation_text, st.session_state.evidence, _llm_client()
+        with st.spinner("Running Main LLM..."):
+            st.session_state.answer = generate_answer(
+                st.session_state.conversation_text, query.fields, st.session_state.missing, _llm_client()
             )
-        with st.spinner("Running Stage 3 (verification)..."):
-            st.session_state.verification = verify_response(
-                st.session_state.draft_response,
-                st.session_state.evidence,
-                query.fields.get("allergies") or [],
-                _llm_client(),
-            )
+
+        drug_names = query.fields.get("drug_names") or []
+        allergies = query.fields.get("allergies") or []
+        if drug_names and allergies:
+            with st.spinner("Running medical ingredient/allergy check..."):
+                st.session_state.ingredient_check = check_drug_allergy_conflicts(
+                    drug_names, allergies, _openfda_client()
+                )
         st.session_state.stage = "result"
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user, not swallowed
-        st.session_state.error = f"Stage 2/3 call failed: {exc}\n\n{TIMEOUT_HINT}"
+        st.session_state.error = f"Main LLM call failed: {exc}\n\n{TIMEOUT_HINT}"
         st.session_state.stage = "review_prompt"
     st.rerun()
 
 
 def _stage_result() -> None:
-    verification = st.session_state.verification
+    ingredient_check = st.session_state.ingredient_check
 
-    if verification.action == "block":
-        st.error(verification.final_response)
+    if ingredient_check is not None and ingredient_check.conflicts:
+        st.error(
+            "Blocked: this response involves an ingredient matching one of your stated "
+            f"allergies. ({'; '.join(ingredient_check.conflicts)})"
+        )
+        with st.expander("Main LLM's answer (blocked)", expanded=False):
+            st.write(st.session_state.answer)
     else:
-        st.success(verification.final_response)
+        st.success(st.session_state.answer)
 
-    with st.expander("Stage 2 draft (before verification)", expanded=False):
-        st.write(st.session_state.draft_response)
-
-    with st.expander("Stage 3 verification detail", expanded=False):
-        st.write(f"Action: **{verification.action}**")
-        for claim in verification.claims:
-            st.write(f"- [{claim.verdict.value if claim.verdict else 'unverified'}] {claim.claim_text}")
-        if verification.ingredient_conflicts:
-            st.write(f"Ingredient conflicts: {verification.ingredient_conflicts}")
+    if ingredient_check is not None:
+        with st.expander("Medical ingredient/allergy check detail", expanded=False):
+            st.write(f"Ingredients found: {ingredient_check.ingredients_found}")
+            st.write(f"Conflicts: {ingredient_check.conflicts}")
 
     if st.button("Start a new question"):
         _reset()
@@ -265,7 +235,7 @@ def _stage_result() -> None:
 
 def main() -> None:
     _init_state()
-    st.title("🛡️ Medical Guardrail")
+    st.title("🛡️ Context Guardrail")
 
     if st.session_state.error:
         st.error(st.session_state.error)

@@ -4,7 +4,7 @@ import pytest
 
 from medical_guardrails.config import Settings
 from medical_guardrails.llm.ollama_client import OllamaClient
-from medical_guardrails.stage1_slotfill.gate import slot_fill_gate
+from medical_guardrails.context_guardrail.gate import slot_fill_gate
 
 pytestmark = pytest.mark.integration
 

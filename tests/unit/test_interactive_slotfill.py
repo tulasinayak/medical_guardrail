@@ -1,17 +1,17 @@
 from unittest.mock import patch
 
 from medical_guardrails.common.schemas import DomainQuery
-from medical_guardrails.stage1_slotfill.gate import GateResult
-from medical_guardrails.stage1_slotfill.interactive import run_interactive_slot_fill
+from medical_guardrails.context_guardrail.gate import GateResult
+from medical_guardrails.context_guardrail.interactive import run_interactive_slot_fill
 
 
 def _query(**field_overrides) -> DomainQuery:
     fields = dict(drug_names=["ibuprofen", "warfarin"], allergies=None, age_bracket=None)
     fields.update(field_overrides)
-    return DomainQuery(raw_text="x", query_type="drug_interaction", fields=fields)
+    return DomainQuery(raw_text="x", query_type="drug_interaction", answer_scope="personal", fields=fields)
 
 
-@patch("medical_guardrails.stage1_slotfill.interactive.slot_fill_gate")
+@patch("medical_guardrails.context_guardrail.interactive.slot_fill_gate")
 def test_resolves_after_one_answer(mock_gate):
     mock_gate.side_effect = [
         GateResult(
@@ -36,7 +36,7 @@ def test_resolves_after_one_answer(mock_gate):
     assert "No allergies, I'm an adult." in result.conversation_text
 
 
-@patch("medical_guardrails.stage1_slotfill.interactive.slot_fill_gate")
+@patch("medical_guardrails.context_guardrail.interactive.slot_fill_gate")
 def test_stops_immediately_if_already_ready(mock_gate):
     mock_gate.return_value = GateResult("ready", _query(allergies=[], age_bracket="adult"), [], None)
 
@@ -49,7 +49,7 @@ def test_stops_immediately_if_already_ready(mock_gate):
     assert result.transcript == [("query", "x")]
 
 
-@patch("medical_guardrails.stage1_slotfill.interactive.slot_fill_gate")
+@patch("medical_guardrails.context_guardrail.interactive.slot_fill_gate")
 def test_stops_after_max_questions_if_still_unresolved(mock_gate):
     mock_gate.return_value = GateResult(
         "needs_clarification", _query(), ["allergies"], "Do you have allergies?"
@@ -69,7 +69,7 @@ def test_stops_after_max_questions_if_still_unresolved(mock_gate):
     assert mock_gate.call_count == 4  # initial check + one re-check per answer
 
 
-@patch("medical_guardrails.stage1_slotfill.interactive.slot_fill_gate")
+@patch("medical_guardrails.context_guardrail.interactive.slot_fill_gate")
 def test_transcript_records_query_questions_and_answers_in_order(mock_gate):
     mock_gate.side_effect = [
         GateResult("needs_clarification", _query(), ["allergies"], "Do you have allergies?"),
@@ -85,7 +85,7 @@ def test_transcript_records_query_questions_and_answers_in_order(mock_gate):
     ]
 
 
-@patch("medical_guardrails.stage1_slotfill.interactive.slot_fill_gate")
+@patch("medical_guardrails.context_guardrail.interactive.slot_fill_gate")
 def test_conversation_text_accumulates_across_multiple_rounds(mock_gate):
     mock_gate.side_effect = [
         GateResult("needs_clarification", _query(), ["allergies"], "Do you have allergies?"),

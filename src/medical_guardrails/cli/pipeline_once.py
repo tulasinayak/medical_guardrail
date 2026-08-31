@@ -1,7 +1,8 @@
-"""End-to-end pipeline entry point: a single raw query goes through Stage 1
-(slot-filling gate) -> Stage 2 (grounded generation) -> Stage 3 (claim +
-ingredient verification), with no drug names or allergies passed
-separately -- Stage 1 is responsible for extracting them from the text.
+"""End-to-end pipeline entry point: a single raw request goes through the
+Context Guardrail (decide whether there's enough context) then Main LLM
+(generate the answer), with no separate retrieval or verification stage.
+The Context Guardrail is responsible for extracting drug names/allergies/
+etc. from the text itself -- nothing is passed in separately.
 
 Usage:
     python -m medical_guardrails.cli.pipeline_once "Can I take ibuprofen with warfarin?"
@@ -36,16 +37,15 @@ def main(argv: list[str] | None = None) -> int:
     result = pipeline.process_query(query)
 
     print(f"Query type: {result.structured_query.query_type}", file=sys.stderr)
+    print(f"Answer scope: {result.structured_query.answer_scope}", file=sys.stderr)
 
     if result.status == "needs_clarification":
         print(f"Missing fields: {result.missing_fields}", file=sys.stderr)
         print(f"\n{result.clarifying_question}")
         return 0
 
-    print(f"Retrieved {len(result.evidence)} evidence chunks", file=sys.stderr)
-    print(f"Verification action: {result.verification.action}", file=sys.stderr)
-    for claim in result.verification.claims:
-        print(f"  [{claim.verdict.value}] {claim.claim_text}", file=sys.stderr)
+    if result.ingredient_check is not None:
+        print(f"Ingredient conflicts: {result.ingredient_check.conflicts}", file=sys.stderr)
 
     print(f"\n{result.final_response}")
     return 0

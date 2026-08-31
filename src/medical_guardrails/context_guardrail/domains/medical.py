@@ -10,11 +10,17 @@ required for certain age brackets) are deliberately out of scope, so it's
 still extracted but never gates on. `fail_closed_query_type` is
 `drug_interaction`, the type with the most required fields, so an
 unclassifiable query gets *more* scrutiny, not less.
+
+The required-fields table below only applies when `answer_scope ==
+"personal"` (see classifier.py/required_fields.py) -- a "general" question
+skips it entirely regardless of query_type, so this table's design
+doesn't need to (and shouldn't try to) distinguish "asked in the
+abstract" from "asked personally" itself.
 """
 
 from __future__ import annotations
 
-from medical_guardrails.stage1_slotfill.domain import DomainSchema, FieldSpec
+from medical_guardrails.context_guardrail.domain import DomainSchema, FieldSpec
 
 QUERY_TYPES = ["drug_interaction", "dosage", "symptom", "home_remedy", "general_info"]
 
@@ -78,7 +84,14 @@ allergies" sets allergies_status to STATED_NONE, and current_medications_status 
 NOT_MENTIONED since medications were never brought up.
 
 For age_bracket, pregnancy_status, symptom_duration, and symptom_severity: use the stated value,
-or null if not mentioned."""
+or null if not mentioned.
+
+Also decide answer_scope: "general" if the question is about the topic in the abstract (e.g.
+"What is ibuprofen?", "Is combining ibuprofen and warfarin generally risky?") and doesn't depend
+on who's asking; "personal" if the user is asking about their own situation (e.g. "Can I take
+ibuprofen?", any phrasing using "I"/"my"/"me", or anything implying they intend to take/use it
+themselves). When genuinely ambiguous, choose "personal" -- asking one unnecessary question is
+better than skipping a necessary one."""
 
 MEDICAL_DOMAIN = DomainSchema(
     name="medical",

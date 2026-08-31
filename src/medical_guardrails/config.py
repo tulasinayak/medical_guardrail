@@ -5,13 +5,10 @@ service this project talks to.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-DEFAULT_DDINTER_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "ddinter" / "ddinter.sqlite"
 
 
 class Settings(BaseSettings):
@@ -33,9 +30,8 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_timeout_seconds: float = 60.0
 
-    rxnorm_base_url: str = "https://rxnav.nlm.nih.gov/REST"
+    # Used only by the medical demo's narrow ingredient/allergy safety check
+    # (medical/openfda_client.py) -- the core Context Guardrail -> Main LLM
+    # pipeline makes no external evidence calls at all.
     openfda_base_url: str = "https://api.fda.gov/drug/label.json"
-    medlineplus_base_url: str = "https://wsearch.nlm.nih.gov/ws/query"
     http_timeout_seconds: float = 15.0
-
-    ddinter_db_path: Path = DEFAULT_DDINTER_DB_PATH

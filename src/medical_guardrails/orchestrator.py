@@ -1,18 +1,18 @@
-"""Wires all three guardrail stages into one pipeline, mirroring
-pii_guardrails.orchestrator.GuardrailedChat: Stage 1 (slot-filling) gates
-whether Stage 2 (retrieval + grounded generation) runs at all, and Stage 3
-(claim + ingredient verification) gates what Stage 2 produces before it
-reaches the caller.
+"""Wires the two core stages together: the Context Guardrail decides
+whether there's enough context to answer, then Main LLM generates the
+answer directly from the original request plus whatever context was
+gathered -- no retrieval, no separate verification stage. The medical
+domain adds one narrow, deterministic safety check on top (ingredient/
+allergy conflict via a single openFDA lookup) -- not a pipeline stage
+every domain goes through, just this one domain's own post-check.
 
-Scope note: evidence retrieval is mostly drug-name-centric (RxNorm/openFDA/
-DDInter). For query types where the user didn't name a drug (most symptom/
-home_remedy/general_info queries), `retrieve_evidence` falls back to a
-MedlinePlus health-topic lookup instead -- see retrieval.py and
-medlineplus_client.py. A pure recipe/home-remedy question with no
-identifiable symptom or drug topic can still end up with no evidence at
-all, in which case Stage 2 correctly falls back to "not in my sources"
-rather than answering from parametric memory -- see README "Known
-limitations".
+Scope note: this project used to ground answers in retrieved evidence
+(RxNorm/openFDA/DDInter/MedlinePlus) and separately verify claims against
+that evidence. Both were removed -- see README for why -- in favor of a
+narrower, more honest story: ask enough questions before answering, then
+let a capable model answer directly and flag its own uncertainty, rather
+than claim the answer is "grounded" or "verified" against a source this
+project cannot itself vouch for the correctness of.
 """
 
 from __future__ import annotations
@@ -20,20 +20,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from medical_guardrails.common.schemas import DomainQuery, EvidenceChunk
+from medical_guardrails.common.schemas import DomainQuery
 from medical_guardrails.config import Settings
+from medical_guardrails.context_guardrail.domain import DomainSchema
+from medical_guardrails.context_guardrail.domains.medical import MEDICAL_DOMAIN
+from medical_guardrails.context_guardrail.gate import slot_fill_gate
 from medical_guardrails.llm.base import LLMClient
 from medical_guardrails.llm.factory import build_llm_client
-from medical_guardrails.stage1_slotfill.gate import slot_fill_gate
-from medical_guardrails.stage2_generate.ddinter_lookup import DDInterLookup
-from medical_guardrails.stage2_generate.generation import generate_grounded_response
-from medical_guardrails.stage2_generate.medlineplus_client import MedlinePlusClient
-from medical_guardrails.stage2_generate.openfda_client import OpenFDAClient
-from medical_guardrails.stage2_generate.retrieval import retrieve_evidence
-from medical_guardrails.stage2_generate.rxnorm_client import RxNormClient
-from medical_guardrails.stage3_verify.verification import VerificationResult, verify_response
+from medical_guardrails.main_llm.generation import generate_answer
+from medical_guardrails.medical.ingredient_safety import IngredientCheckResult, check_drug_allergy_conflicts
+from medical_guardrails.medical.openfda_client import OpenFDAClient
 
 PipelineStatus = Literal["needs_clarification", "answered"]
+
+BLOCKED_INGREDIENT_MESSAGE = (
+    "This response has been blocked: it involves an ingredient that matches one of your stated "
+    "allergies. Please consult a pharmacist or doctor before taking this medication."
+)
 
 
 @dataclass
@@ -42,32 +45,42 @@ class PipelineResult:
     structured_query: DomainQuery
     missing_fields: list[str] = field(default_factory=list)
     clarifying_question: str | None = None
-    evidence: list[EvidenceChunk] = field(default_factory=list)
     draft_response: str | None = None
-    verification: VerificationResult | None = None
+    ingredient_check: IngredientCheckResult | None = None
     final_response: str | None = None
 
 
 class MedicalGuardrailPipeline:
     """One instance is meant to be reused across queries -- the client
-    objects are stateless/cheap, so nothing here needs per-query teardown."""
+    objects are stateless/cheap, so nothing here needs per-query teardown.
+
+    `guardrail_llm_client` and `main_llm_client` can be set independently
+    -- e.g. a cheap local model for the Context Guardrail and a stronger
+    hosted model for the actual answer -- so that configuration can be
+    compared against using one model throughout. Both default to the same
+    client when only `llm_client` is given."""
 
     def __init__(
         self,
         settings: Settings | None = None,
         llm_client: LLMClient | None = None,
+        guardrail_llm_client: LLMClient | None = None,
+        main_llm_client: LLMClient | None = None,
+        domain: DomainSchema = MEDICAL_DOMAIN,
     ) -> None:
         self.settings = settings or Settings()
-        self.llm_client = llm_client or build_llm_client(self.settings)
-        self.rxnorm_client = RxNormClient(self.settings.rxnorm_base_url, self.settings.http_timeout_seconds)
+        if guardrail_llm_client is None or main_llm_client is None:
+            default_client = llm_client or build_llm_client(self.settings)
+            guardrail_llm_client = guardrail_llm_client or default_client
+            main_llm_client = main_llm_client or default_client
+        self.guardrail_llm_client = guardrail_llm_client
+        self.main_llm_client = main_llm_client
+        self.llm_client = self.main_llm_client  # backward-compatible alias
+        self.domain = domain
         self.openfda_client = OpenFDAClient(self.settings.openfda_base_url, self.settings.http_timeout_seconds)
-        self.ddinter_lookup = DDInterLookup(self.settings.ddinter_db_path)
-        self.medlineplus_client = MedlinePlusClient(
-            self.settings.medlineplus_base_url, self.settings.http_timeout_seconds
-        )
 
     def process_query(self, raw_text: str) -> PipelineResult:
-        gate_result = slot_fill_gate(raw_text, self.llm_client)
+        gate_result = slot_fill_gate(raw_text, self.guardrail_llm_client, self.domain)
 
         if gate_result.status == "needs_clarification":
             return PipelineResult(
@@ -78,24 +91,22 @@ class MedicalGuardrailPipeline:
             )
 
         query = gate_result.structured_query
-        evidence = retrieve_evidence(
-            drug_names=query.fields.get("drug_names") or [],
-            rxnorm_client=self.rxnorm_client,
-            openfda_client=self.openfda_client,
-            ddinter_lookup=self.ddinter_lookup,
-            symptom_query_text=query.raw_text,
-            medlineplus_client=self.medlineplus_client,
-            llm_client=self.llm_client,
-        )
+        draft = generate_answer(query.raw_text, query.fields, [], self.main_llm_client)
 
-        draft = generate_grounded_response(query.raw_text, evidence, self.llm_client)
-        verification = verify_response(draft, evidence, query.fields.get("allergies") or [], self.llm_client)
+        ingredient_result = None
+        final_response = draft
+        drug_names = query.fields.get("drug_names") or []
+        allergies = query.fields.get("allergies") or []
+        if self.domain.name == "medical" and drug_names and allergies:
+            ingredient_result = check_drug_allergy_conflicts(drug_names, allergies, self.openfda_client)
+            if ingredient_result.conflicts:
+                conflict_list = "; ".join(ingredient_result.conflicts)
+                final_response = f"{BLOCKED_INGREDIENT_MESSAGE} ({conflict_list})"
 
         return PipelineResult(
             status="answered",
             structured_query=query,
-            evidence=evidence,
             draft_response=draft,
-            verification=verification,
-            final_response=verification.final_response,
+            ingredient_check=ingredient_result,
+            final_response=final_response,
         )

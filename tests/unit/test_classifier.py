@@ -1,8 +1,8 @@
 import json
 from unittest.mock import MagicMock
 
-from medical_guardrails.stage1_slotfill.classifier import build_response_schema, extract_structured_query
-from medical_guardrails.stage1_slotfill.domains.medical import MEDICAL_DOMAIN
+from medical_guardrails.context_guardrail.classifier import build_response_schema, extract_structured_query
+from medical_guardrails.context_guardrail.domains.medical import MEDICAL_DOMAIN
 
 
 def _client(response: dict) -> MagicMock:
