@@ -1,7 +1,7 @@
 [project]
 name = "medical-guardrails"
 version = "0.1.0"
-description = "A staged guardrail wrapping an LLM for health-related queries: pre-generation slot-filling, retrieval-grounded generation, and post-generation claim verification."
+description = "A domain-agnostic context-sufficiency guardrail (ask before answering when it matters) in front of a main LLM, demonstrated on a medical use case."
 requires-python = ">=3.12"
 readme = "README.md"
 dependencies = [
@@ -11,8 +11,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-eval = ["pandas>=2.2", "scikit-learn>=1.4"]
-adversarial = ["spikee"]
+adversarial = ["spikee"]  # deferred -- see README, unrun since the retrieval/verification removal
 gui = ["streamlit>=1.35"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4", "mypy>=1.9", "respx>=0.21"]
 
