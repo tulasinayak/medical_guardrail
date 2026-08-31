@@ -193,11 +193,51 @@ The multi-turn loop itself (`context_guardrail/interactive.py`'s `run_interactiv
 
 Note: `MedicalGuardrailPipeline.process_query()` (the one-shot path used by `pipeline_once.py` and `eval/score.py`) still reclassifies fresh on every call with no memory between calls — the multi-turn conversation state lives only in the interactive tools built on top of it.
 
+## Results at a glance
+
+All three experiments below use the same 35-case set (`eval/functional_cases.jsonl`) and GPT-4o-mini as the generating model; see "Evaluation" for methodology and "On trusting these numbers" for how much weight each figure can bear.
+
+**Functional accuracy** (`python -m eval.score`):
+
+| | pass rate |
+|---|---|
+| Overall | 32/35 (91.4%) |
+| `answered` | 17/17 |
+| `ask_clarification` | 14/16 |
+| `blocked_ingredient_match` | 1/2 |
+
+**Does enforcement beat prompting?** (`python -m eval.baseline_compare`) — same model throughout, only the mechanism differs:
+
+| configuration | correct | unnecessary questions | premature answers |
+|---|---|---|---|
+| Main LLM directly | 19/35 | 0 | 16 |
+| Main LLM + "ask if missing" system prompt | 20/35 | 0 | 15 |
+| Context Guardrail → Main LLM | 31/35 | 2 | 2 |
+
+The prompted model asked exactly **once** across all 35 cases, despite 16 needing it — a soft instruction doesn't reliably produce the behavior; a code-level gate does.
+
+**Answer quality rubric**, 0–2 scale (`python -m eval.quality_judge`), judged by GPT-4o and cross-checked by an independent fresh Claude agent with no project context:
+
+| baseline | GPT-4o judge (avg) | Claude judge (avg) |
+|---|---|---|
+| Main LLM directly | 1.90 | 1.77 |
+| Main LLM + system prompt | 1.87 | 1.81 |
+| Context Guardrail | 1.58 | 1.50 |
+
+Both judges rank the three configurations identically. The Guardrail's lower average is almost entirely the mechanical cost of grading a clarifying question as an incomplete answer: restricted to the 19/35 cases it actually answers, its quality score is 1.95 — on par with the other two.
+
 ## Evaluation
 
-**Functional accuracy** (`eval/functional_cases.jsonl` + `eval/score.py`): 35 hand-labeled cases against the real end-to-end pipeline, each with a hand-written `expected_action` from a closed set (`ask_clarification`, `answered`, `blocked_ingredient_match` — much smaller than before the retrieval/verification removal, since there's no "no evidence" state or claim-verdict-driven block anymore). `eval/pipeline_adapter.py` holds the one place that maps `PipelineResult` onto that closed set. `regr_001`–`regr_003` are regression cases from bugs found through manual live testing during this project's build. `control_answered_*` are fully-specified, conflict-free queries that must actually get answered. `control_general_scope_*` are the two cases that most directly test the new `answer_scope` mechanism — abstract phrasing that should skip the personal-context gate entirely. Run: `python -m eval.score` (needs Ollama + network; writes `eval/results/functional_run.jsonl`).
+**Functional accuracy** (`eval/functional_cases.jsonl` + `eval/score.py`): 35 hand-labeled cases against the real end-to-end pipeline, each with a hand-written `expected_action` from a closed set (`ask_clarification`, `answered`, `blocked_ingredient_match` — much smaller than before the retrieval/verification removal, since there's no "no evidence" state or claim-verdict-driven block anymore). `eval/pipeline_adapter.py` holds the one place that maps `PipelineResult` onto that closed set. `regr_001`–`regr_003` are regression cases from bugs found through manual live testing during this project's build. `control_answered_*` are fully-specified, conflict-free queries that must actually get answered. `control_general_scope_*` are the two cases that most directly test the new `answer_scope` mechanism — abstract phrasing that should skip the personal-context gate entirely. Latest run (GPT-4o-mini): 32/35 (91.4%) — see "On trusting these numbers" below before treating that as precise. Run: `python -m eval.score` (needs Ollama or an OpenAI key + network; writes `eval/results/functional_run.jsonl`).
 
 **Baseline comparison** (`eval/baseline_compare.py`): the actual research question this redesign is about — does the Context Guardrail beat simpler alternatives? Runs the same case set through three configurations: (1) Main LLM directly, (2) Main LLM with a system prompt telling it to ask for missing information itself (detected via an explicit marker it's asked to use, not a fragile heuristic), (3) the real pipeline. Automates whether each configuration asked or answered versus each case's hand-labeled expectation; does **not** automate answer quality/usefulness, which is printed side by side per case for manual comparison rather than pretended to be scored. Run: `python -m eval.baseline_compare` (needs Ollama + network; slower than `score.py` since it makes ~3x the LLM calls).
+
+**Answer quality rubric** (`eval/quality_judge.py`): `baseline_compare.py` deliberately doesn't score answer quality, just ask-vs-answer correctness. This scores the same 105 replies (35 cases x 3 baselines) on a 5-criterion 0-2 rubric (relevance, completeness, appropriate uncertainty, context use, overall usefulness), graded blind (the judge never sees which baseline produced a reply) by a different model (GPT-4o) than the one generating the replies (GPT-4o-mini), to limit same-model self-preference. Result: Guardrail 1.58 avg vs. 1.87-1.90 for the other two -- but that's almost entirely the mechanical cost of grading a clarifying question as an "incomplete answer": split by outcome, the Guardrail's actual answers (19/35 cases) score 1.95, on par with the other baselines, and the 16 cases it correctly defers on score low on completeness (0.25) by definition. Run: `python -m eval.quality_judge` (same requirements as `baseline_compare.py`, plus a separate judge call per reply).
+
+**On trusting these numbers.** Three things worth stating plainly rather than leaving implicit:
+- **The case labels have no independent labeler.** All 35 `expected_action` values in `functional_cases.jsonl` were written by the same person who built the pipeline, already knowing its architecture -- there's no blind ground truth here. At least one case (`home_remedy_unstated_allergy_001`) was flagged as genuinely ambiguous in its own notes at label-writing time, and one (`home_remedy_ingredient_002`, see below) turned out to be an outright wrong label. Treat headline pass rates as having a real +/-1-2 case margin from labeling judgment calls alone, on top of whatever the model itself gets wrong -- a 32/35 could reasonably have been labeled as 30/35 or 34/35 by someone else.
+- **One ingredient-check test case was empirically wrong, and the others in that pattern haven't been re-audited.** `home_remedy_ingredient_002` originally expected `blocked_ingredient_match` for a lactose-intolerance-plus-acetaminophen case; checking live against the openFDA API showed the actual returned acetaminophen label contains no lactose, so blocking was never correct here (the case's own notes had already flagged this as unconfirmed) -- relabeled to `answered`. `home_remedy_ingredient_001` (ibuprofen, same allergy) was separately live-verified to be correctly labeled. The other cases built on similar drug/ingredient assumptions have not been individually re-checked against a live label the same way, so treat that pattern's correctness as an open question, not a re-audited certainty.
+- **The quality-rubric's "blind" grading is blind to the label, not to identity.** Guardrail clarifying questions are built by joining fixed strings straight from each field's `FieldSpec.clarifying_question` (`context_guardrail/gate.py`) -- never LLM-generated -- so a question like "Do you have any known drug allergies? (If none, just say so.)" identifies the Guardrail on sight regardless of shuffling, for the ~16/35 cases where it asks. A same-vendor bias check (GPT-4o judging GPT-4o-mini's output) was cross-checked with a second, independently-run judge (a fresh Claude agent, given only the rubric and the anonymized replies, with no knowledge of this project or which system produced what) -- the two judges agreed closely (Guardrail avg 1.50 vs. 1.58, all baselines ranked the same way, all criteria within 0.26 except `appropriate_uncertainty` on the Guardrail's ask-cases at 0.34, where GPT-4o was more generous). The Claude judge also surfaced something GPT-4o didn't flag: on 2 of the Guardrail's ask-cases where the user had already stated a directly relevant allergy in the same message, the fixed-template question asked only about the next missing field and never acknowledged the allergy already given -- scored 0 across every criterion. That's a real, specific weakness in the templated-question mechanism (it doesn't reference what's already known), not just the generic "asking costs completeness points" effect.
 
 **Adversarial resistance (spikee)**: built in an earlier version of this project, targeting the old Stage 1 gate / Stage 3 block split. **Deferred, not reworked** — see `eval/targets/guardrail_target.py`'s own docstring; it's been patched just enough to not reference removed types, but it was never run even before the redesign (spikee isn't installed in this environment) and its bypass semantics haven't been reconsidered for the new `answer_scope` mechanism. Treat it as stale until someone deliberately revisits it.
 
@@ -211,3 +251,32 @@ Note: `MedicalGuardrailPipeline.process_query()` (the one-shot path used by `pip
 - **Latency**: a CPU-only local Ollama instance evaluates prompts at roughly 40ms/token, and the Context Guardrail re-runs full classification on the whole accumulated conversation each round rather than incrementally — a multi-question interactive run can take a couple of minutes on hardware like this.
 - **Adversarial resistance is unverified**: see "Adversarial testing (spikee)" above — deferred, not run.
 - **No conversation state in the one-shot path**: `process_query()` takes one raw string and reclassifies from scratch every call — multi-turn state only exists in the interactive tools built on top of it (`context_guardrail/interactive.py`).
+
+## Skills & techniques demonstrated
+
+**LLM systems architecture**
+- Designed, shipped, and then substantially simplified a multi-stage LLM pipeline in response to a concretely observed failure mode (the back-pain over-blocking case under "Why this shape"), rather than accreting complexity indefinitely.
+- Pluggable domain abstraction (`DomainSchema`/`FieldSpec`) so a single gating mechanism generalizes across domains instead of hardcoding medical-specific logic into the core.
+- Dependency-injected LLM backend (`LLMClient` protocol) supporting independent models for the gate vs. the answerer, enabling a "cheap gate, strong answerer" configuration as a first-class thing to test, not a hack.
+
+**Prompt engineering & structured generation**
+- JSON-schema-constrained decoding (`format=`) for reliable field extraction, with an explicit fail-closed policy (unparseable → the most conservative outcome) rather than assuming well-formed output.
+- System-prompt design for a binary coarseness trade-off (`answer_scope: general | personal`) deliberately chosen over a finer-grained classification after reasoning about a small model's known reliability limits.
+
+**Evaluation methodology & experimental design**
+- Designed a 3-way controlled comparison (raw LLM / prompted LLM / gated pipeline) isolating one variable — enforcement vs. instruction — while holding the underlying model constant.
+- Built an LLM-as-judge rubric (5 criteria, 0–2 scale) with explicit scoring guidance for edge cases (grading a clarifying question on its own terms rather than penalizing it for not being an answer).
+- Identified and corrected for same-vendor judge bias by cross-checking a GPT-4o judge against an independently-run, context-free Claude agent given only the rubric and anonymized outputs — and reported where the two disagreed rather than only where they agreed.
+- Audited the project's own eval-case labels rather than treating them as ground truth: traced every functional-test failure to a root cause (real bug vs. mislabeled test case vs. self-flagged ambiguous case vs. classifier noise on rerun), and corrected a test label after empirically verifying it against a live external API.
+- Named, rather than hid, every methodological weakness that survives the above (self-labeled cases with no independent labeler, response-shape identity leakage in "blind" grading, small sample size) directly in this document.
+
+**Software engineering**
+- Python package structured around single-responsibility modules (`context_guardrail/`, `main_llm/`, `medical/`), with a deterministic, non-LLM safety check (`ingredient_safety.py`) kept clearly separate from LLM-judgment-based logic.
+- Test suite with unit tests fully mocked against the `LLMClient` protocol (no network/model dependency) plus a separate `integration` marker for real-backend tests.
+- Git history managed as a sequence of self-consistent, individually-green commits across a large (~55-file) architectural rewrite, rather than one opaque commit.
+
+**Integration & tooling**
+- Raw `httpx` clients for OpenAI and Ollama (no SDK dependency) with a shared interface, and a live public API integration (openFDA drug labels) for the one deterministic safety check.
+- Streamlit GUI with explicit session-state-driven stages and a human-approval checkpoint before the generation call fires.
+
+**How to use this project**: see "Quickstart" above for setup and every entry point (CLI, interactive builder, GUI, tests, eval scripts) in one place.

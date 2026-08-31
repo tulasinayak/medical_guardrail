@@ -69,7 +69,11 @@ def run_baseline2(input_text: str, llm_client: LLMClient) -> dict:
 
 def run_baseline3(input_text: str, pipeline: MedicalGuardrailPipeline) -> dict:
     result = run_pipeline(input_text, pipeline)
-    return {"asked": result["status"] == "needs_clarification", "reply": result["response"]}
+    if result["status"] == "needs_clarification":
+        reply = result["result"].clarifying_question
+    else:
+        reply = result["response"]
+    return {"asked": result["status"] == "needs_clarification", "reply": reply}
 
 
 def load_cases(path: Path = CASES_PATH) -> list[dict]:
